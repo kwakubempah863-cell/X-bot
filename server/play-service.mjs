@@ -149,6 +149,7 @@ async function buildBypassArgs(extra = []) {
     '--extractor-retries', '5',
     '--socket-timeout', '30',
     '--force-ipv4',
+    '--js-runtimes', `node:${process.execPath}`,
 
     /* Geo bypass */
     '--geo-bypass',
