@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import yts from 'yt-search';
@@ -28,15 +27,8 @@ const YTDLP_BIN =
   process.env.X_PLAY_YTDLP_BIN ||
   (process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
 
-/* ---- BYPASS: optional cookie file ---- */
-const COOKIE_FILE =
-  process.env.X_PLAY_COOKIE_FILE || '';
-
-const YT_COOKIES_B64 =
-  process.env.YT_COOKIES_B64 || '';
-
 const YT_COOKIES_FILE =
-  path.join(os.tmpdir(), 'yt-cookies.txt');
+  '/tmp/yt-cookies.txt';
 
 /* ---- BYPASS: optional PO token / visitor data ---- */
 const PO_TOKEN =
@@ -45,10 +37,6 @@ const PO_TOKEN =
 /* ---- BYPASS: geo spoof country ---- */
 const GEO_COUNTRY =
   process.env.X_PLAY_GEO_COUNTRY || 'US';
-
-/* ---- BYPASS: impersonation target ---- */
-const IMPERSONATE =
-  process.env.X_PLAY_IMPERSONATE || '';
 
 const limit = pLimit(Math.max(1, CONCURRENCY));
 
@@ -147,18 +135,6 @@ function runProcess(
  * BYPASS: build yt-dlp args with all the tricks
  * ----------------------------------------------------- */
 async function buildBypassArgs(extra = []) {
-  const cookieFile = YT_COOKIES_B64
-    ? YT_COOKIES_FILE
-    : COOKIE_FILE;
-
-  if (YT_COOKIES_B64) {
-    await fsp.writeFile(
-      YT_COOKIES_FILE,
-      Buffer.from(YT_COOKIES_B64, 'base64').toString('utf8'),
-      { mode: 0o600 }
-    );
-  }
-
   const args = [
     '--no-warnings',
     '--no-playlist',
@@ -180,7 +156,7 @@ async function buildBypassArgs(extra = []) {
 
     /* Use the YouTube web player client. */
     '--extractor-args',
-    'youtube:player_client=web',
+    'youtube:player_client=android,web',
 
     /* Bypass age gate and consent */
     '--age-limit', '99',
@@ -188,14 +164,14 @@ async function buildBypassArgs(extra = []) {
     'youtube:skip=translated_subs',
   ];
 
-  if (IMPERSONATE && IMPERSONATE.toLowerCase() !== 'chrome') {
-    args.push('--impersonate', IMPERSONATE);
-  }
-
-  /* Cookie bypass — if a cookie file is configured,
-     yt-dlp uses it to fetch age-gated / login-required content */
-  if (cookieFile && fs.existsSync(cookieFile)) {
-    args.push('--cookies', cookieFile);
+  const cookiesB64 = String(process.env.YT_COOKIES_B64 || '').trim();
+  if (cookiesB64) {
+    fs.writeFileSync(
+      YT_COOKIES_FILE,
+      Buffer.from(cookiesB64, 'base64').toString('utf8'),
+      { mode: 0o600 }
+    );
+    args.push('--cookies', YT_COOKIES_FILE);
   }
 
   /* PO token bypass */
@@ -446,7 +422,5 @@ export const playConfig = {
   TIMEOUT_MS,
   CONCURRENCY,
   YTDLP_BIN,
-  COOKIE_FILE,
   GEO_COUNTRY,
-  IMPERSONATE,
 };
