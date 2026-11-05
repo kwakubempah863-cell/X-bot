@@ -1,0 +1,12 @@
+{
+  "name": "X Control Center",
+  "short_name": "X Control",
+  "description": "Control center for the X multifunctional WhatsApp bot.",
+  "start_url": "/app",
+  "display": "standalone",
+  "background_color": "#05080d",
+  "theme_color": "#151a2d",
+  "icons": [
+    {"src": "/x-icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}

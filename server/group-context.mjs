@@ -1,0 +1,9 @@
+import { getGroup, listMembers, groupStats } from './db.mjs'
+
+export function buildGroupContext(groupId,{memberLimit=60}={}){
+  const group=getGroup(groupId);if(!group)return null
+  const members=listMembers(groupId,memberLimit,0);const admins=members.filter(m=>['admin','superadmin'].includes(m.role));const stats=groupStats(groupId)
+  return {groupId:group.group_id,name:group.name,description:group.description,rules:group.rules,memberCount:group.member_count,admins:admins.map(m=>({displayName:m.display_name,username:m.username,role:m.role})),members:members.map(m=>({displayName:m.display_name,username:m.username,role:m.role,level:m.level,xp:m.xp})),settings:{prefix:group.prefix,theme:group.theme,antiLink:!!group.anti_link,antiSpam:!!group.anti_spam,welcomeEnabled:!!group.welcome_enabled,goodbyeEnabled:!!group.goodbye_enabled,...safeJson(group.settings_json)},economy:stats,botConfiguration:{connectionState:group.connection_state}}
+}
+export function contextForAI(groupId,prompt){const context=buildGroupContext(groupId);if(!context)return{system:'No group context is available. Do not guess group-specific facts.',prompt};return{system:`You are X, the assistant for exactly one WhatsApp group. The current group is "${context.name}". Use only the supplied context for group-specific facts. Never invent members, rules, settings or statistics. Never expose phone numbers, JIDs, authentication data, session data, or information from another group. If the context does not contain an answer, say so. You may summarize public group metadata, identify synchronized admins/members by display name, explain settings, rules and group statistics.\nGROUP CONTEXT:\n${JSON.stringify(context)}`,prompt,context}}
+function safeJson(value){try{const o=JSON.parse(value||'{}');delete o.phone;delete o.phoneNumber;delete o.jid;delete o.auth;delete o.session;return o}catch{return {}}}

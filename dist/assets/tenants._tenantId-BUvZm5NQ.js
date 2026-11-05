@@ -1,0 +1,1 @@
+import{q as o,j as n}from"./index-CdVUl3rB.js";import{T as e}from"./tenant-detail-CgqNm0Ls.js";import"./refresh-cw-BJOuNjXU.js";import"./createLucideIcon-soI3uQjs.js";import"./users-Bz95G5Pi.js";function p(){const{tenantId:t}=o.useParams();return n.jsx(e,{tenantId:t})}export{p as component};
