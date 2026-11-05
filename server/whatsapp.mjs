@@ -361,11 +361,12 @@ export class WhatsAppRuntime {
         browser: Browsers.ubuntu('X Bot'),
         printQRInTerminal: false,
         version: version || [4, 23, 9],
+        qrTimeout: 120_000,
 
         getMessage: async () => undefined,
         markOnlineOnConnect: false,
 
-        connectTimeoutMs: 60000,
+        connectTimeoutMs: 60_000,
         defaultQueryTimeoutMs: 60000,
         retryRequestDelayMs: 500
       })
