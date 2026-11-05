@@ -156,7 +156,7 @@ async function buildBypassArgs(extra = []) {
 
     /* Use the YouTube web player client. */
     '--extractor-args',
-    'youtube:player_client=tv,web',
+    'youtube:player_client=web',
 
     /* Bypass age gate and consent */
     '--age-limit', '99',
@@ -257,7 +257,7 @@ async function getMetadata(url) {
  * ----------------------------------------------------- */
 async function downloadAudio(url, outputPath) {
   const args = await buildBypassArgs([
-    '-f', 'bestaudio/best',
+    '-f', 'ba/b',
     '--extract-audio',
     '--audio-format', 'mp3',
     '--audio-quality', '128K',
@@ -370,7 +370,7 @@ export async function playResolve(query) {
         console.warn('[X PLAY] direct MP3 unavailable, trying raw + FFmpeg:', error?.message);
 
         const rawArgs = buildBypassArgs([
-          '-f', 'bestaudio/best',
+          '-f', 'ba/b',
           '-o', rawPath,
           '--',
           video.url,
