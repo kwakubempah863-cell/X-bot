@@ -1,7 +1,6 @@
-# Use a Node.js image that includes common tools
 FROM node:20-slim
 
-# Install Python (required for yt-dlp), ffmpeg, and yt-dlp
+# Install Python, ffmpeg, and yt-dlp
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
@@ -11,20 +10,17 @@ RUN apt-get update && apt-get install -y \
     && chmod a+rx /usr/local/bin/yt-dlp \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Copy package files and install dependencies
 COPY package*.json ./
 RUN npm install
 
-# Copy the rest of your bot's code
 COPY . .
 
-# Build the dashboard (if needed for your Fastify SPA serving)
+# Build the React dashboard
 RUN npm run build
 
-# Expose the port Render expects
+# Render expects the app to listen on 10000
 EXPOSE 10000
 
 # Start the bot

@@ -16,7 +16,7 @@ import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { promises as fsp } from 'node:fs'
 
-import { useSQLiteAuthState } from './auth-store.mjs'
+import { usePostgresAuthState } from './pg-auth-store.mjs'
 
 import P from 'pino'
 import QRCode from 'qrcode'
@@ -343,7 +343,7 @@ export class WhatsAppRuntime {
         fetchLatestBaileysVersion
       } = baileys
 
-      const { state, saveCreds } = await useSQLiteAuthState(`x-bot-${this.tenantId}`)
+      const { state, saveCreds } = await usePostgresAuthState(`x-bot-${this.tenantId}`)
 
       this.registered = !!state.creds.registered
       this.status = 'connecting'
