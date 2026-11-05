@@ -14,6 +14,7 @@ import {
   maybePickFavorite,
   logChat
 } from './memory.mjs'
+import { answerWithConfiguredProvider } from './ai-context.mjs'
 
 /* -------------------------------------------------------------------------- */
 /* Reply-to-X detection                                                       */
@@ -248,6 +249,9 @@ function normalizeDMText(value) {
     .trim()
 }
 
+const hasOpenAIApiKey = () =>
+  Boolean(String(process.env.OPENAI_API_KEY ?? '').trim())
+
 export function validateAgentConfig() {
   const rawValue = String(process.env.X_AI_PROVIDER ?? '').trim()
   const provider = rawValue ? rawValue.toLowerCase() : 'local'
@@ -268,8 +272,8 @@ export function validateAgentConfig() {
   }
 
   if (provider === 'openai') {
-    if (!process.env.OPENAI_API_KEY || !String(process.env.OPENAI_API_KEY).trim()) {
-      errors.push('OPENAI_API_KEY is not set')
+    if (!hasOpenAIApiKey()) {
+      return { ok: true, errors: [], provider: 'local' }
     }
     if (!process.env.OPENAI_MODEL || !String(process.env.OPENAI_MODEL).trim()) {
       errors.push('OPENAI_MODEL is not set')
@@ -593,7 +597,13 @@ export async function generateReply({
 
   let raw
   try {
-    raw = await callProvider(system, user)
+    const provider = String(process.env.X_AI_PROVIDER ?? '').trim().toLowerCase()
+    if (provider === 'openai' && !hasOpenAIApiKey()) {
+      const localAnswer = await answerWithConfiguredProvider(groupId, trimmed)
+      raw = localAnswer.text
+    } else {
+      raw = await callProvider(system, user)
+    }
   } catch (error) {
     console.warn('[X AGENT] provider failed:', error?.message || error)
     return null

@@ -48,7 +48,7 @@ const GEO_COUNTRY =
 
 /* ---- BYPASS: impersonation target ---- */
 const IMPERSONATE =
-  process.env.X_PLAY_IMPERSONATE || 'chrome';
+  process.env.X_PLAY_IMPERSONATE || '';
 
 const limit = pLimit(Math.max(1, CONCURRENCY));
 
@@ -178,9 +178,6 @@ async function buildBypassArgs(extra = []) {
     '--geo-bypass',
     '--geo-bypass-country', GEO_COUNTRY,
 
-    /* Impersonation — spoof real browser TLS/fingerprint */
-    '--impersonate', IMPERSONATE,
-
     /* Use the YouTube web player client. */
     '--extractor-args',
     'youtube:player_client=web',
@@ -190,6 +187,10 @@ async function buildBypassArgs(extra = []) {
     '--extractor-args',
     'youtube:skip=translated_subs',
   ];
+
+  if (IMPERSONATE && IMPERSONATE.toLowerCase() !== 'chrome') {
+    args.push('--impersonate', IMPERSONATE);
+  }
 
   /* Cookie bypass — if a cookie file is configured,
      yt-dlp uses it to fetch age-gated / login-required content */
