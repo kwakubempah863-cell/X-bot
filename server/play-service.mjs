@@ -156,7 +156,7 @@ async function buildBypassArgs(extra = []) {
 
     /* Use the YouTube web player client. */
     '--extractor-args',
-    'youtube:player_client=android,web',
+    'youtube:player_client=tv,web',
 
     /* Bypass age gate and consent */
     '--age-limit', '99',
