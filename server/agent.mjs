@@ -21,7 +21,8 @@ import { answerWithConfiguredProvider } from './ai-context.mjs'
 /* -------------------------------------------------------------------------- */
 
 function resolveProvider() {
-  return (process.env.X_AI_PROVIDER || 'gemini').trim().toLowerCase();
+  const provider = (process.env.X_AI_PROVIDER || 'gemini').trim().toLowerCase()
+  return provider === 'grok' ? 'groq' : provider
 }
 
 /* -------------------------------------------------------------------------- */
@@ -262,7 +263,8 @@ const hasOpenAIApiKey = () =>
 
 export function validateAgentConfig() {
   const rawValue = String(process.env.X_AI_PROVIDER ?? '').trim()
-  const provider = rawValue ? rawValue.toLowerCase() : 'local'
+  const configuredProvider = rawValue ? rawValue.toLowerCase() : 'local'
+  const provider = configuredProvider === 'grok' ? 'groq' : configuredProvider
   const errors = []
 
   if (!rawValue || provider === 'local') {
@@ -289,6 +291,17 @@ export function validateAgentConfig() {
     return { ok: errors.length === 0, errors, provider }
   }
 
+  if (provider === 'groq') {
+    if (
+      !String(
+        process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY || ''
+      ).trim()
+    ) {
+      errors.push('GROQ_API_KEY is not set')
+    }
+    return { ok: errors.length === 0, errors, provider }
+  }
+
   if (provider === 'openrouter') {
     if (!process.env.OPENROUTER_API_KEY || !String(process.env.OPENROUTER_API_KEY).trim()) {
       errors.push('OPENROUTER_API_KEY is not set')
@@ -311,7 +324,7 @@ export function validateAgentConfig() {
 
   return {
     ok: false,
-    errors: [`Unknown X_AI_PROVIDER "${rawValue}" — expected one of: local, ollama, openai, openrouter, gemini`],
+    errors: [`Unknown X_AI_PROVIDER "${rawValue}" — expected one of: local, ollama, openai, groq, openrouter, gemini`],
     provider
   }
 }
@@ -461,6 +474,44 @@ async function callProvider(system, user) {
       const errText = await response.text().catch(() => '')
       throw new Error(
         `OpenAI returned ${response.status}: ${errText.slice(0, 200)}`
+      )
+    }
+
+    const data = await response.json()
+    return String(data.choices?.[0]?.message?.content || '').trim()
+  }
+
+  if (provider === 'groq') {
+    const apiKey = String(
+      process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY || ''
+    ).trim()
+    if (!apiKey) throw new Error('GROQ_API_KEY is not set')
+
+    const model = process.env.GROQ_MODEL || 'llama3-8b-8192'
+    const base = 'https://api.groq.com/openai/v1'
+
+    const response = await fetch(`${base}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.95,
+        max_tokens: 120,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user }
+        ]
+      }),
+      signal: AbortSignal.timeout(30000)
+    })
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '')
+      throw new Error(
+        `Groq returned ${response.status}: ${errText.slice(0, 200)}`
       )
     }
 

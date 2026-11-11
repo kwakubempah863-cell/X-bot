@@ -132,9 +132,10 @@ Set configuration in the root `.env` file or the process environment. Keep real 
 | `X_OWNER_JID`, `X_OWNER_LID`, `X_OWNER_USERNAME`, `X_OWNER_NUMBER` | Trusted owner identity values. Configure at least one before using owner-only commands. Use the account's international number without `+` or spaces when setting `X_OWNER_NUMBER`. |
 | `X_API_KEY` | Optional API key for protected API requests. |
 | `X_CORS_ORIGIN` | Comma-separated allowed origins for a deployed Control Center/API. |
-| `X_AI_PROVIDER` | AI provider: `gemini` (default), `local`, `ollama`, `openai`, or `openrouter`. |
+| `X_AI_PROVIDER` | AI provider: `gemini` (default), `local`, `ollama`, `openai`, `groq` (or `grok`), or `openrouter`. |
 | `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_BASE_URL` | Gemini provider credentials and endpoint/model settings. |
 | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` | Local Ollama endpoint and model. |
+| `GROQ_API_KEY`, `GROQ_MODEL` | Groq credentials and model; defaults to `llama3-8b-8192`. |
 | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` | OpenRouter credentials and model. |
 | `X_ADMIN_USERNAME`, `X_ADMIN_PASSWORD_HASH`, `X_SESSION_SECRET` | Optional local administrator/session authentication settings. |
 
