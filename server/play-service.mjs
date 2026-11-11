@@ -270,17 +270,40 @@ async function downloadAudio(url, outputPath) {
 /* -------------------------------------------------------
  * FFmpeg fallback conversion
  * ----------------------------------------------------- */
-function convertToMp3(input, output, durationSec) {
+function convertToMp3(input, output, durationSec, thumbnailPath = null) {
   return new Promise((resolve, reject) => {
-    const command = ffmpeg(input)
-      .audioCodec('libmp3lame')
-      .audioBitrate('128k')
-      .audioFrequency(44100)
+    const isMp3Input = path.extname(input).toLowerCase() === '.mp3';
+    const command = ffmpeg(input);
+
+    if (isMp3Input) {
+      command.audioCodec('copy');
+    } else {
+      command
+        .audioCodec('libmp3lame')
+        .audioBitrate('128k')
+        .audioFrequency(44100);
+    }
+
+    command
       .format('mp3')
       .on('error', reject)
       .on('end', resolve);
 
-    if (durationSec && durationSec > 0) {
+    if (thumbnailPath) {
+      command
+        .input(thumbnailPath)
+        .outputOptions(
+          '-map', '0:a:0',
+          '-map', '1:v:0',
+          '-c:v', 'copy',
+          '-id3v2_version', '3',
+          '-disposition:v:0', 'attached_pic',
+          '-metadata:s:v:0', 'title=Album cover',
+          '-metadata:s:v:0', 'comment=Cover (front)',
+        );
+    }
+
+    if (!isMp3Input && durationSec && durationSec > 0) {
       command.duration(Math.min(durationSec, MAX_DURATION));
     }
 
@@ -320,6 +343,8 @@ export async function playResolve(query) {
     const base = safeName(`${video.title}_${video.author?.name || 'unknown'}`);
     const rawPath = path.join(TMP_ROOT, `${jobId}_${base}.webm`);
     const mp3Path = path.join(TMP_ROOT, `${jobId}_${base}.mp3`);
+    const coveredMp3Path = path.join(TMP_ROOT, `${jobId}_${base}_covered.mp3`);
+    const thumbnailPath = path.join(TMP_ROOT, `${jobId}_${base}_cover.jpg`);
 
     const maxBytes = MAX_MB * 1024 * 1024;
 
@@ -334,12 +359,50 @@ export async function playResolve(query) {
       const actualDuration = Number(metadata?.duration || duration);
       if (actualDuration > MAX_DURATION) throw new Error('FILE_TOO_LARGE');
 
+      let thumbnailBuffer = null;
+      const thumbnailUrls = Array.from(
+        new Set([metadata?.thumbnail, video.thumbnail].filter(Boolean)),
+      );
+      for (const thumbnailUrl of thumbnailUrls) {
+        try {
+          const response = await fetch(thumbnailUrl, {
+            signal: AbortSignal.timeout(15000),
+          });
+          if (!response.ok) {
+            throw new Error(`Thumbnail request failed with status ${response.status}`);
+          }
+
+          const contentLength = Number(response.headers.get('content-length') || 0);
+          if (contentLength > 5 * 1024 * 1024) {
+            throw new Error('Thumbnail response exceeded 5 MB');
+          }
+
+          const imageBuffer = Buffer.from(await response.arrayBuffer());
+          if (!imageBuffer.length) throw new Error('Thumbnail response was empty');
+          if (imageBuffer.length > 5 * 1024 * 1024) {
+            throw new Error('Thumbnail response exceeded 5 MB');
+          }
+
+          thumbnailBuffer = await sharp(imageBuffer)
+            .resize(320, 320, { fit: 'inside', withoutEnlargement: true })
+            .jpeg({ quality: 80 })
+            .toBuffer();
+          await fsp.writeFile(thumbnailPath, thumbnailBuffer, { mode: 0o600 });
+          break;
+        } catch (error) {
+          console.warn('[X PLAY] thumbnail fetch failed:', error?.message || error);
+        }
+      }
+
       await downloadAudio(video.url, mp3Path);
 
       let stat;
+      let usedFallbackConversion = false;
+      let finalMp3Path = mp3Path;
       try {
         stat = await verifyOutput(mp3Path);
       } catch (error) {
+        usedFallbackConversion = true;
         console.warn('[X PLAY] direct MP3 unavailable, trying raw + FFmpeg:', error?.message);
 
         const rawArgs = buildBypassArgs([
@@ -353,41 +416,31 @@ export async function playResolve(query) {
           timeoutMs: Math.max(TIMEOUT_MS, 120000),
         });
 
-        await convertToMp3(rawPath, mp3Path, actualDuration);
+        await convertToMp3(
+          rawPath,
+          mp3Path,
+          actualDuration,
+          thumbnailBuffer ? thumbnailPath : null,
+        );
         stat = await verifyOutput(mp3Path);
+      }
+
+      if (thumbnailBuffer && !usedFallbackConversion) {
+        try {
+          await convertToMp3(mp3Path, coveredMp3Path, actualDuration, thumbnailPath);
+          stat = await verifyOutput(coveredMp3Path);
+          finalMp3Path = coveredMp3Path;
+        } catch (error) {
+          await fsp.unlink(coveredMp3Path).catch(() => {});
+          console.warn('[X PLAY] failed to embed thumbnail:', error?.message || error);
+        }
       }
 
       if (stat.size > maxBytes) throw new Error('FILE_TOO_LARGE');
 
-      const buffer = await fsp.readFile(mp3Path);
+      const buffer = await fsp.readFile(finalMp3Path);
       if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
         throw new Error('EMPTY_OUTPUT');
-      }
-
-      let thumbnailBuffer = null;
-      const thumbnailUrl = metadata?.thumbnail || video.thumbnail;
-      if (thumbnailUrl) {
-        try {
-          const response = await fetch(thumbnailUrl, {
-            signal: AbortSignal.timeout(15000),
-          });
-          if (!response.ok) {
-            throw new Error(`Thumbnail request failed with status ${response.status}`);
-          }
-
-          const imageBuffer = Buffer.from(await response.arrayBuffer());
-          if (!imageBuffer.length) throw new Error('Thumbnail response was empty');
-          if (imageBuffer.length > 5 * 1024 * 1024) {
-            throw new Error('Thumbnail response exceeded 5 MB');
-          }
-
-          thumbnailBuffer = await sharp(imageBuffer)
-            .resize(320, 320, { fit: 'inside', withoutEnlargement: true })
-            .jpeg({ quality: 80 })
-            .toBuffer();
-        } catch (error) {
-          console.warn('[X PLAY] thumbnail fetch failed:', error?.message || error);
-        }
       }
 
       return {
@@ -409,6 +462,8 @@ export async function playResolve(query) {
     } finally {
       await fsp.unlink(rawPath).catch(() => {});
       await fsp.unlink(mp3Path).catch(() => {});
+      await fsp.unlink(coveredMp3Path).catch(() => {});
+      await fsp.unlink(thumbnailPath).catch(() => {});
     }
   });
 }
