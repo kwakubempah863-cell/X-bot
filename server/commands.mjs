@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PDFDocument } from 'pdf-lib'
+import { ping } from 'quick-ping-util'
 
 import {
   searchMovie,
@@ -961,10 +962,16 @@ register(
   'ping',
   {
     category: 'core',
-    description: 'Check X runtime'
+    description: 'Check network connectivity'
   },
-  async ({ runtime }) =>
-    `🏓 Pong! X is ${runtime.getStatus().status}.`
+  async () => {
+    const result = await ping('8.8.8.8', { count: 3 })
+    if (!result.alive) return 'Ping failed: Host unreachable.'
+
+    const latency =
+      result.latency === null ? 'unavailable' : `${result.latency}ms`
+    return `🏓 Pong! Latency: ${latency}`
+  }
 )
 
 

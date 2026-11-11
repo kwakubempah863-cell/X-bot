@@ -141,6 +141,8 @@ async function buildBypassArgs(extra = []) {
     '--extractor-retries', '5',
     '--socket-timeout', '30',
     '--force-ipv4',
+    '--downloader', 'aria2c',
+    '--downloader-args', 'aria2c:-x 16 -s 16 -k 1M',
 
     /* Geo bypass */
     '--geo-bypass',

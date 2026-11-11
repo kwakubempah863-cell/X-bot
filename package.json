@@ -60,6 +60,7 @@
     "pg": "^8.23.1",
     "pino": "10.1.0",
     "qrcode": "1.5.4",
+    "quick-ping-util": "^1.0.0",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-hook-form": "7.85.0",

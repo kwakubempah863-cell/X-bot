@@ -11,7 +11,10 @@ function getPool() {
   }
 
   if (!pool) {
-    pool = new Pool({ connectionString: process.env.DATABASE_URL })
+    pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      idleTimeoutMillis: 30000,
+    })
   }
 
   return pool
@@ -60,10 +63,35 @@ export async function usePostgresAuthState(sessionId = 'default') {
     `, [sessionId, 'creds', JSON.stringify(data, BufferJSON.replacer)])
   }
 
+  const queryWithConnectionRetry = async (query, values) => {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      let client
+      try {
+        client = await db.connect()
+        return await client.query(query, values)
+      } catch (error) {
+        const isConnectionError =
+          error?.code === 'ECONNRESET' ||
+          /connection terminated unexpectedly/i.test(String(error?.message || ''))
+
+        if (client) {
+          client.release(isConnectionError ? error : undefined)
+          client = null
+        }
+
+        if (!isConnectionError || attempt === 1) throw error
+
+        console.warn('[X AUTH] Postgres connection interrupted; retrying query once')
+      } finally {
+        if (client) client.release()
+      }
+    }
+  }
+
   const keys = {
     get: async (type, ids) => {
       const keyIds = ids.map((id) => `${type}-${id}`)
-      const { rows } = await db.query(
+      const { rows } = await queryWithConnectionRetry(
         'SELECT key_id, value FROM baileys_pg_auth WHERE session_id = $1 AND key_id = ANY($2::text[])',
         [sessionId, keyIds]
       )
