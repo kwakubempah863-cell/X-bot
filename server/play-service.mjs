@@ -16,6 +16,8 @@ const MAX_DURATION =
 const TIMEOUT_MS =
   Number(process.env.X_PLAY_TIMEOUT_MS || 30000);
 
+const YT_COOKIES_FILE = '/tmp/yt-cookies.txt';
+
 const CONCURRENCY =
   Number(process.env.X_PLAY_CONCURRENCY || 2);
 
