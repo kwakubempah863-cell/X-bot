@@ -152,10 +152,6 @@ async function buildBypassArgs(extra = []) {
     '--geo-bypass',
     '--geo-bypass-country', GEO_COUNTRY,
 
-    /* Try clients with less restrictive IP checks */
-    '--extractor-args',
-    'youtube:player_client=android',
-
     /* Bypass age gate and consent */
     '--age-limit', '99',
     '--extractor-args',
@@ -258,7 +254,7 @@ async function getMetadata(url) {
  * ----------------------------------------------------- */
 async function downloadAudio(url, outputPath) {
   const args = await buildBypassArgs([
-    '-f', '18/best',
+    '-f', 'bestaudio/best',
     '--extract-audio',
     '--audio-format', 'mp3',
     '--audio-quality', '128K',
