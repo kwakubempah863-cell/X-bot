@@ -27,7 +27,28 @@ fi
 
 # Start wireproxy using the config
 if [ -f /tmp/wgcf-profile.conf ]; then
-    wireproxy -c /tmp/wgcf-profile.conf --bind 127.0.0.1:40000 &
+    # Extract keys from the WARP config
+    PRIVATE_KEY=$(grep "PrivateKey" /tmp/wgcf-profile.conf | cut -d' ' -f3)
+    PUBLIC_KEY=$(grep "PublicKey" /tmp/wgcf-profile.conf | cut -d' ' -f3)
+    ENDPOINT=$(grep "Endpoint" /tmp/wgcf-profile.conf | cut -d' ' -f3)
+    
+    # Create wireproxy config
+    cat > /tmp/wireproxy.conf <<EOF
+[Interface]
+PrivateKey = $PRIVATE_KEY
+Address = 172.16.0.2/32
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = $PUBLIC_KEY
+Endpoint = $ENDPOINT
+PersistentKeepalive = 25
+
+[Socks5]
+BindAddress = 127.0.0.1:40000
+EOF
+    
+    wireproxy -c /tmp/wireproxy.conf &
     sleep 2
 else
     echo "WARNING: No WARP config found. Proxy may not work."
