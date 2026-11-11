@@ -258,7 +258,7 @@ async function getMetadata(url) {
  * ----------------------------------------------------- */
 async function downloadAudio(url, outputPath) {
   const args = await buildBypassArgs([
-    '-f', 'bestaudio/best/bestvideo*+ba',
+    '-f', '18/best',
     '--extract-audio',
     '--audio-format', 'mp3',
     '--audio-quality', '128K',
