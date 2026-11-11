@@ -153,9 +153,9 @@ async function buildBypassArgs(extra = []) {
     '--geo-bypass',
     '--geo-bypass-country', GEO_COUNTRY,
 
-    /* Let the installed provider plugin supply mweb's matching PO token. */
+    /* Let the installed provider plugin supply tokens for selected clients. */
     '--extractor-args',
-    'youtube:player_client=mweb',
+    'youtube:player_client=ios,android,web',
 
     /* Bypass age gate and consent */
     '--age-limit', '99',
@@ -248,7 +248,7 @@ async function getMetadata(url) {
  * ----------------------------------------------------- */
 async function downloadAudio(url, outputPath) {
   const args = await buildBypassArgs([
-    '-f', 'bestaudio/best/best',
+    '-f', 'bestaudio/best/bestvideo+ba',
     '--extract-audio',
     '--audio-format', 'mp3',
     '--audio-quality', '128K',
@@ -260,6 +260,10 @@ async function downloadAudio(url, outputPath) {
   ]);
 
   try {
+    const loggedArgs = args.map((arg, index) =>
+      args[index - 1] === '--proxy' ? '[REDACTED]' : arg
+    );
+    console.log('[X PLAY] Executing:', YTDLP_BIN, loggedArgs.join(' '));
     await runProcess(YTDLP_BIN, args, {
       timeoutMs: Math.max(TIMEOUT_MS, 120000),
     });
