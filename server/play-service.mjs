@@ -151,12 +151,33 @@ async function buildBypassArgs(extra = []) {
 
     /* Try clients with less restrictive IP checks */
     '--extractor-args',
-    'youtube:player_client=tv,ios,android',
+    'youtube:player_client=android_vr',
 
     /* Bypass age gate and consent */
     '--age-limit', '99',
     '--extractor-args',
     'youtube:skip=translated_subs',
+
+    /* Cookies — only attach if valid */
+    ...(() => {
+      const cookiesB64 = String(process.env.YT_COOKIES_B64 || '').trim();
+      if (!cookiesB64) {
+        console.warn('[X PLAY] YT_COOKIES_B64 not set; skipping cookies');
+        return [];
+      }
+      fs.writeFileSync(
+        YT_COOKIES_FILE,
+        Buffer.from(cookiesB64, 'base64').toString('utf8'),
+        { mode: 0o600 },
+      );
+      const stat = fs.statSync(YT_COOKIES_FILE);
+      console.log('[X PLAY] Cookies file size:', stat.size, 'bytes');
+      if (stat.size < 100) {
+        console.warn('[X PLAY] Cookies file too small (<100 bytes); skipping');
+        return [];
+      }
+      return ['--cookies', YT_COOKIES_FILE];
+    })(),
   ];
 
   return args.concat(extra);
