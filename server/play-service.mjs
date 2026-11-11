@@ -154,7 +154,7 @@ async function buildBypassArgs(extra = []) {
 
     /* Try clients with less restrictive IP checks */
     '--extractor-args',
-    'youtube:player_client=mweb,tv,web_safari',
+    'youtube:player_client=mweb,tv,web_safari;player_skip=',
 
     /* Bypass age gate and consent */
     '--age-limit', '99',
