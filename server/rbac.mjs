@@ -80,8 +80,6 @@ export function candidateIdentityValues(identity = {}) {
     identity.phoneNumber,
     identity.phone,
     identity.username,
-    identity.displayName,
-    identity.pushName,
     identity.participantAlt,
     identity.remoteJidAlt,
   ].filter(Boolean)
@@ -138,62 +136,84 @@ export function candidateIdentityValues(identity = {}) {
 }
 
 /*
- * True when any candidate matches any configured owner identifier.
+ * Match configured owner identifiers only against corresponding identity fields.
  */
 export function isOwner(identity) {
-  const configured = configuredOwnerIdentifiers()
-  if (!configured.size) return false
+  const phoneIdentities = [
+    identity?.phoneNumber,
+    identity?.phone,
+    identity?.ownerJid,
+    identity?.jid,
+    identity?.participantAlt,
+    identity?.remoteJidAlt,
+  ]
+    .filter(value => value && !String(value).toLowerCase().includes('@lid'))
+    .map(value => String(value).trim())
 
-  const candidates = candidateIdentityValues(identity)
-  const rawLid = identity?.lid || null
-  const rawJid = identity?.jid || null
+  const jidIdentities = [
+    identity?.jid,
+    identity?.ownerJid,
+    identity?.participantAlt,
+    identity?.remoteJidAlt,
+    identity?.phoneNumber,
+    identity?.phone,
+  ]
+    .filter(value => value && !String(value).toLowerCase().includes('@lid'))
+    .map(value => String(value).trim())
 
-  const addNormalizedCandidate = (value) => {
-    if (!value) return
+  const lidIdentities = [
+    identity?.lid,
+    identity?.jid,
+    identity?.participantAlt,
+    identity?.remoteJidAlt,
+  ]
+    .filter(value => value && String(value).toLowerCase().includes('@lid'))
+    .map(value => String(value).trim())
 
-    const s = String(value).trim()
-    if (!s) return
-
-    candidates.add(norm(s))
-
-    const user = jidUser(s)
-    if (user) {
-      candidates.add(norm(user))
-      const userDigits = digits(user)
-      if (userDigits) candidates.add(userDigits)
+  const ownerJid = String(process.env.X_OWNER_JID || '').trim()
+  if (ownerJid) {
+    const ownerValues = new Set([
+      norm(ownerJid),
+      norm(jidUser(ownerJid)),
+      digits(jidUser(ownerJid)),
+    ])
+    if (
+      jidIdentities.some(value =>
+        [
+          norm(value),
+          norm(jidUser(value)),
+          digits(jidUser(value)),
+        ].some(candidate => candidate && ownerValues.has(candidate))
+      )
+    ) {
+      return true
     }
-
-    const digitsOnly = digits(s)
-    if (digitsOnly) candidates.add(digitsOnly)
   }
 
-  if (rawLid) addNormalizedCandidate(rawLid)
-  if (rawJid) addNormalizedCandidate(rawJid)
-
-  if (process.env.X_OWNER_LID) {
-    const ownerLid = norm(process.env.X_OWNER_LID)
-    if (ownerLid && rawLid && ownerLid === norm(rawLid)) return true
-    if (ownerLid && rawJid && ownerLid === norm(rawJid)) return true
-  }
-
-  if (process.env.X_OWNER_NUMBER) {
-    const ownerNumber = digits(process.env.X_OWNER_NUMBER)
-    if (ownerNumber) {
-      const lidDigits = rawLid ? digits(String(rawLid).split('@')[0]) : ''
-      const jidDigits = rawJid ? digits(String(rawJid).split('@')[0]) : ''
-
-      if (lidDigits && lidDigits === ownerNumber) return true
-      if (jidDigits && jidDigits === ownerNumber) return true
-
-      candidates.add(ownerNumber)
+  const ownerLid = String(process.env.X_OWNER_LID || '').trim()
+  if (ownerLid) {
+    const ownerValues = new Set([norm(ownerLid), norm(jidUser(ownerLid))])
+    if (
+      lidIdentities.some(value =>
+        [norm(value), norm(jidUser(value))].some(candidate =>
+          candidate && ownerValues.has(candidate)
+        )
+      )
+    ) {
+      return true
     }
   }
 
-  for (const value of candidates) {
-    if (configured.has(value)) return true
+  const ownerNumber = digits(process.env.X_OWNER_NUMBER)
+  if (
+    ownerNumber &&
+    phoneIdentities.some(value => digits(value) === ownerNumber)
+  ) {
+    return true
   }
 
-  return false
+  const ownerUsername = norm(process.env.X_OWNER_USERNAME)
+  return Boolean(ownerUsername && norm(identity?.username) === ownerUsername)
 }
 
 /*
@@ -241,10 +261,7 @@ export function identityFromMessage(message) {
     ctx?.username ||
     null
 
-  const phoneNumber =
-    jidUser(phoneJid) ||
-    jidUser(jid) ||
-    null
+  const phoneNumber = phoneJid ? jidUser(phoneJid) : null
 
   return {
     jid,

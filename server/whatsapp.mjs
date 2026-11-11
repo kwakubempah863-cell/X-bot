@@ -101,7 +101,6 @@ import {
   roleFor,
   can,
   configuredOwnerIdentifiers,
-  candidateIdentityValues,
   isOwner as rbacIsOwner
 } from './rbac.mjs'
 
@@ -190,6 +189,10 @@ const jidUser = v => {
   const beforeAt = at === -1 ? s : s.slice(0, at)
   const colon = beforeAt.indexOf(':')
   return colon === -1 ? beforeAt : beforeAt.slice(0, colon)
+}
+const isSelfJid = (jid, ownJid) => {
+  const targetDigits = digits(jidUser(jid))
+  return Boolean(targetDigits && targetDigits === digits(jidUser(ownJid)))
 }
 
 export class WhatsAppRuntime {
@@ -1892,6 +1895,13 @@ export class WhatsAppRuntime {
     const list = Array.isArray(jids) ? jids.filter(Boolean) : []
     if (!list.length) return []
 
+    if (
+      action === 'approve' &&
+      list.some(jid => isSelfJid(jid, this.sock?.user?.id))
+    ) {
+      throw new Error('I cannot kick myself.')
+    }
+
     try {
       return await this.sock.groupRequestParticipantsUpdate(groupId, list, action)
     } catch (error) {
@@ -1913,8 +1923,15 @@ export class WhatsAppRuntime {
       throw new Error('This command can only be used inside a group.')
     }
 
+    const participants = [jid].filter(
+      target => !isSelfJid(target, this.sock?.user?.id)
+    )
+    if (!participants.length) {
+      throw new Error('No eligible participants remain after excluding the bot.')
+    }
+
     try {
-      return await this.sock.groupParticipantsUpdate(groupId, [jid], 'add')
+      return await this.sock.groupParticipantsUpdate(groupId, participants, 'add')
     } catch (error) {
       const code = error?.output?.statusCode || error?.statusCode
       if ([428, 408, 503, 500].includes(code)) {
@@ -2716,7 +2733,7 @@ export class WhatsAppRuntime {
       return
     }
 
-    if (command.admin && group && !can(role, 'moderator')) {
+    if (command.admin && (!group || !can(role, 'moderator'))) {
       try {
         await this.reactTo(jid, message.key, '⛔')
         await this.safeSendMessage(
@@ -3248,10 +3265,18 @@ export class WhatsAppRuntime {
       throw new Error('Unsupported participant action.')
     }
 
+    const targets = Array.isArray(participants)
+      ? participants.filter(jid => !isSelfJid(jid, this.sock?.user?.id))
+      : participants
+
+    if (Array.isArray(participants) && targets.length === 0) {
+      throw new Error('No eligible participants remain after excluding the bot.')
+    }
+
     const mapped = action === 'kick' ? 'remove' : action
 
     try {
-      return await this.sock.groupParticipantsUpdate(groupId, participants, mapped)
+      return await this.sock.groupParticipantsUpdate(groupId, targets, mapped)
     } catch (error) {
       const code = error?.output?.statusCode || error?.statusCode
       if ([428, 408, 503].includes(code)) {

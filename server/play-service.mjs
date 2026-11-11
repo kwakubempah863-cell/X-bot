@@ -160,7 +160,8 @@ async function buildBypassArgs(extra = []) {
     '--no-playlist',
     '--ignore-config',
     '--no-check-certificates',
-    '--no-call-home',
+    '--js-runtimes', 'node:/usr/local/bin/node',
+    '--remote-components', 'ejs:github',
 
     /* Retries — survive throttling and transient blocks */
     '--retries', '10',
@@ -174,9 +175,9 @@ async function buildBypassArgs(extra = []) {
     '--geo-bypass',
     '--geo-bypass-country', GEO_COUNTRY,
 
-    /* Use the YouTube web player client. */
+    /* Use Android and web YouTube player clients. */
     '--extractor-args',
-    'youtube:player_client=web',
+    'youtube:player_client=android,web',
 
     /* Bypass age gate and consent */
     '--age-limit', '99',
@@ -277,7 +278,7 @@ async function getMetadata(url) {
  * ----------------------------------------------------- */
 async function downloadAudio(url, outputPath) {
   const args = await buildBypassArgs([
-    '-f', 'ba/b',
+    '-f', 'bestaudio/best',
     '--extract-audio',
     '--audio-format', 'mp3',
     '--audio-quality', '128K',
@@ -293,6 +294,7 @@ async function downloadAudio(url, outputPath) {
       timeoutMs: Math.max(TIMEOUT_MS, 120000),
     });
   } catch (error) {
+    console.error('[X PLAY] Raw yt-dlp error:', error.stderr || error.message);
     const stderr = String(error?.stderr || '');
     const combined = (stderr + ' ' + String(error?.message || '')).toLowerCase();
 

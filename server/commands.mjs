@@ -168,6 +168,8 @@ const commands = new Map()
 
 const pendingManga = new Map()
 const pendingAnime = new Map()
+const groupModificationCooldowns = new Map()
+const GROUP_MODIFICATION_COOLDOWN_MS = 10_000
 
 const register = (name, meta, handler) =>
   commands.set(name, {
@@ -182,6 +184,45 @@ function memberMention(
   jid
 ) {
   return createMention(jid)
+}
+
+async function hasGroupAdminPermission({ runtime, group, sender, message }) {
+  if (!group?.group_id) return false
+
+  const identity = identityFromMessage(message || {})
+  identity.jid = sender
+
+  return (
+    runtime.isOwner(identity) ||
+    await runtime.isGroupAdmin(group.group_id, sender)
+  )
+}
+
+function participantJidKeys(value) {
+  const jid = String(value || '').trim().toLowerCase()
+  if (!jid) return []
+
+  const [user, server] = jid.split('@', 2)
+  const bareUser = user.split(':', 1)[0]
+  return server
+    ? [`${bareUser}@${server}`, bareUser]
+    : [bareUser]
+}
+
+function isGroupAdminParticipant(participant, jid) {
+  if (participant?.admin !== 'admin' && participant?.admin !== 'superadmin') {
+    return false
+  }
+
+  const targetKeys = new Set(participantJidKeys(jid))
+  const participantKeys = [
+    participant.id,
+    participant.jid,
+    participant.lid,
+    participant.phoneNumber
+  ].flatMap(participantJidKeys)
+
+  return participantKeys.some(key => targetKeys.has(key))
 }
 
 
@@ -2181,8 +2222,8 @@ register(
     usage: '.antilink <on|off>',
     admin: true
   },
-  async ({ runtime, group, sender, args }) => {
-    if (!(await runtime.isGroupAdmin(group.group_id, sender))) {
+  async ({ runtime, group, sender, args, message }) => {
+    if (!(await hasGroupAdminPermission({ runtime, group, sender, message }))) {
       return 'Admin permission required.'
     }
 
@@ -2209,8 +2250,8 @@ register(
     usage: '.antispam <on|off>',
     admin: true
   },
-  async ({ runtime, group, sender, args }) => {
-    if (!(await runtime.isGroupAdmin(group.group_id, sender))) {
+  async ({ runtime, group, sender, args, message }) => {
+    if (!(await hasGroupAdminPermission({ runtime, group, sender, message }))) {
       return 'Admin permission required.'
     }
 
@@ -2237,12 +2278,12 @@ register(
     usage: '.mute',
     admin: true
   },
-  async ({ runtime, group, sender }) => {
+  async ({ runtime, group, sender, message }) => {
     if (!group?.group_id) {
       return 'This command can only be used inside a group.'
     }
 
-    if (!(await runtime.isGroupAdmin(group.group_id, sender))) {
+    if (!(await hasGroupAdminPermission({ runtime, group, sender, message }))) {
       return 'Admin permission required.'
     }
 
@@ -2270,12 +2311,12 @@ register(
     usage: '.unmute',
     admin: true
   },
-  async ({ runtime, group, sender }) => {
+  async ({ runtime, group, sender, message }) => {
     if (!group?.group_id) {
       return 'This command can only be used inside a group.'
     }
 
-    if (!(await runtime.isGroupAdmin(group.group_id, sender))) {
+    if (!(await hasGroupAdminPermission({ runtime, group, sender, message }))) {
       return 'Admin permission required.'
     }
 
@@ -2363,12 +2404,12 @@ register(
     usage: '.antidelete <on|off|admins|public|status>',
     admin: true
   },
-  async ({ runtime, group, sender, args }) => {
+  async ({ runtime, group, sender, args, message }) => {
     if (!group?.group_id) {
       return 'This command can only be used inside a group.'
     }
 
-    if (!(await runtime.isGroupAdmin(group.group_id, sender))) {
+    if (!(await hasGroupAdminPermission({ runtime, group, sender, message }))) {
       return 'Admin permission required.'
     }
 
@@ -2828,8 +2869,8 @@ register(
     usage: '.warn @user [reason]',
     admin: true
   },
-  async ({ runtime, group, sender, args, mentions }) => {
-    if (!(await runtime.isGroupAdmin(group.group_id, sender))) {
+  async ({ runtime, group, sender, args, mentions, message }) => {
+    if (!(await hasGroupAdminPermission({ runtime, group, sender, message }))) {
       return 'Admin permission required.'
     }
 
@@ -2900,8 +2941,8 @@ register(
     usage: '.clearwarn @user',
     admin: true
   },
-  async ({ runtime, group, sender, mentions }) => {
-    if (!(await runtime.isGroupAdmin(group.group_id, sender))) {
+  async ({ runtime, group, sender, mentions, message }) => {
+    if (!(await hasGroupAdminPermission({ runtime, group, sender, message }))) {
       return 'Admin permission required.'
     }
 
@@ -2931,12 +2972,12 @@ register(
     usage: '.approveall',
     admin: true
   },
-  async ({ runtime, group, sender }) => {
+  async ({ runtime, group, sender, message }) => {
     if (!group?.group_id) {
       return 'This command can only be used inside a group.'
     }
 
-    if (!(await runtime.isGroupAdmin(group.group_id, sender))) {
+    if (!(await hasGroupAdminPermission({ runtime, group, sender, message }))) {
       return 'Admin permission required.'
     }
 
@@ -2965,6 +3006,7 @@ register(
     try {
       result = await runtime.updateJoinRequests(group.group_id, jids, 'approve')
     } catch (error) {
+      if (error.message === 'I cannot kick myself.') return error.message
       return `❌ Approval failed: ${error.message}`
     }
 
@@ -3006,12 +3048,12 @@ register(
     usage: '.add <phone-number>',
     admin: true
   },
-  async ({ runtime, group, sender, args }) => {
+  async ({ runtime, group, sender, args, message }) => {
     if (!group?.group_id) {
       return 'This command can only be used inside a group.'
     }
 
-    if (!(await runtime.isGroupAdmin(group.group_id, sender))) {
+    if (!(await hasGroupAdminPermission({ runtime, group, sender, message }))) {
       return 'Admin permission required.'
     }
 
@@ -3049,6 +3091,8 @@ register(
       result = await runtime.addParticipant(group.group_id, jid)
     } catch (error) {
       const message = String(error?.message || '')
+
+      if (message === 'I cannot kick myself.') return message
 
       if (/not authorized|forbidden/i.test(message)) {
         return '❌ X must be a group admin to add members.'
@@ -3093,9 +3137,32 @@ for (const action of ['kick', 'promote', 'demote']) {
       usage: `.${action} @user`,
       admin: true
     },
-    async ({ runtime, group, sender, mentions }) => {
-      if (!(await runtime.isGroupAdmin(group.group_id, sender))) {
+    async ({ runtime, group, sender, mentions, message }) => {
+      if (!(await hasGroupAdminPermission({ runtime, group, sender, message }))) {
         return 'Admin permission required.'
+      }
+
+      let metadata
+      try {
+        metadata = await runtime.sock.groupMetadata(group.group_id)
+      } catch (error) {
+        console.warn(
+          `[X ${action.toUpperCase()}] Could not verify group admins:`,
+          error?.message || error
+        )
+        return '❌ Could not verify group admin permissions. No action was taken.'
+      }
+
+      const participants = metadata?.participants || []
+      const botJid = runtime.sock?.user?.id
+      const botIsAdmin = participants.some(participant =>
+        isGroupAdminParticipant(participant, botJid)
+      )
+      const senderIsAdmin = participants.some(participant =>
+        isGroupAdminParticipant(participant, sender)
+      )
+      if (!botJid || !botIsAdmin || !senderIsAdmin) {
+        return '❌ Both X and you must be group admins to perform this action.'
       }
 
       const target = mentions?.[0]
@@ -3114,6 +3181,7 @@ for (const action of ['kick', 'promote', 'demote']) {
           mentions: targetMention.jid ? [targetMention.jid] : []
         }
       } catch (error) {
+        if (error.message === 'I cannot kick myself.') return error.message
         return `❌ ${error.message}`
       }
     }
@@ -6922,12 +6990,12 @@ register(
     usage: '.unauth @user',
     admin: true
   },
-  async ({ runtime, group, sender, mentions }) => {
+  async ({ runtime, group, sender, mentions, message }) => {
     if (!group?.group_id) {
       return 'This command can only be used inside a group.'
     }
 
-    if (!(await runtime.isGroupAdmin(group.group_id, sender))) {
+    if (!(await hasGroupAdminPermission({ runtime, group, sender, message }))) {
       return 'Admin permission required.'
     }
 
@@ -7083,12 +7151,12 @@ register(
     usage: '.execute @bot',
     admin: true
   },
-  async ({ runtime, group, sender, mentions }) => {
+  async ({ runtime, group, sender, mentions, message }) => {
     if (!group?.group_id) {
       return 'This command can only be used inside a group.'
     }
 
-    if (!(await runtime.isGroupAdmin(group.group_id, sender))) {
+    if (!(await hasGroupAdminPermission({ runtime, group, sender, message }))) {
       return 'Admin permission required.'
     }
 
@@ -7117,6 +7185,7 @@ register(
     try {
       await runtime.groupParticipantAction(group.group_id, [target], 'kick')
     } catch (error) {
+      if (error.message === 'I cannot kick myself.') return error.message
       return `❌ ${error.message}`
     }
 
@@ -7410,6 +7479,45 @@ export async function executeCommand(ctx, name, args) {
 
   if (!command) {
     return null
+  }
+
+  const identity = identityFromMessage(ctx.message || {})
+  identity.jid = ctx.sender
+
+  if (command.owner && !ctx.runtime.isOwner(identity)) {
+    return '👑 Owner permission required.'
+  }
+
+  if (
+    command.admin &&
+    (
+      !ctx.group?.group_id ||
+      (
+        !ctx.runtime.isOwner(identity) &&
+        !(await ctx.runtime.isGroupAdmin(ctx.group.group_id, ctx.sender))
+      )
+    )
+  ) {
+    return '🛡️ Admin permission required.'
+  }
+
+  if (command.admin && ctx.group?.group_id) {
+    const now = Date.now()
+    for (const [key, expiresAt] of groupModificationCooldowns) {
+      if (expiresAt <= now) groupModificationCooldowns.delete(key)
+    }
+
+    const cooldownKey = `${ctx.runtime.tenantId || 'default'}:${ctx.sender}`
+    const expiresAt = groupModificationCooldowns.get(cooldownKey) || 0
+    if (now < expiresAt) {
+      const secondsRemaining = Math.ceil((expiresAt - now) / 1000)
+      return `⏳ Please wait ${secondsRemaining} second${secondsRemaining === 1 ? '' : 's'} before another group-modifying command.`
+    }
+
+    groupModificationCooldowns.set(
+      cooldownKey,
+      now + GROUP_MODIFICATION_COOLDOWN_MS
+    )
   }
 
   return command.handler(ctx, args)
