@@ -153,9 +153,9 @@ async function buildBypassArgs(extra = []) {
     '--geo-bypass',
     '--geo-bypass-country', GEO_COUNTRY,
 
-    /* Let the installed provider plugin supply tokens for selected clients. */
+    /* Reliable extractor client only (web) */
     '--extractor-args',
-    'youtube:player_client=ios,android,web',
+    'youtube:player_client=web',
 
     /* Bypass age gate and consent */
     '--age-limit', '99',
@@ -248,7 +248,7 @@ async function getMetadata(url) {
  * ----------------------------------------------------- */
 async function downloadAudio(url, outputPath) {
   const args = await buildBypassArgs([
-    '-f', 'bestaudio/best/bestvideo+ba',
+    '-f', 'bestaudio/best',
     '--extract-audio',
     '--audio-format', 'mp3',
     '--audio-quality', '128K',
