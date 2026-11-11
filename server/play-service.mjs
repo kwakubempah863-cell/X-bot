@@ -135,6 +135,7 @@ function runProcess(
  * BYPASS: build yt-dlp args with all the tricks
  * ----------------------------------------------------- */
 async function buildBypassArgs(extra = []) {
+  const PROXY_URL = process.env.X_PLAY_PROXY || '';
   let poToken = '';
   if (Date.now() < cachedPoToken.expiresAt) {
     poToken = cachedPoToken.value;
@@ -170,14 +171,15 @@ async function buildBypassArgs(extra = []) {
     '--extractor-retries', '5',
     '--socket-timeout', '30',
     '--force-ipv4',
+    ...(PROXY_URL ? ['--proxy', PROXY_URL] : []),
 
     /* Geo bypass */
     '--geo-bypass',
     '--geo-bypass-country', GEO_COUNTRY,
 
-    /* Use TV and iOS YouTube player clients. */
+    /* Use web and TV YouTube player clients. */
     '--extractor-args',
-    'youtube:player_client=tv,ios',
+    'youtube:player_client=web,tv',
 
     /* Bypass age gate and consent */
     '--age-limit', '99',
