@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -26,9 +25,6 @@ const TMP_ROOT =
 const YTDLP_BIN =
   process.env.X_PLAY_YTDLP_BIN ||
   (process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
-
-const YT_COOKIES_FILE =
-  '/tmp/yt-cookies.txt';
 
 /* ---- BYPASS: geo spoof country ---- */
 const GEO_COUNTRY =
@@ -131,7 +127,10 @@ function runProcess(
  * BYPASS: build yt-dlp args with all the tricks
  * ----------------------------------------------------- */
 async function buildBypassArgs(extra = []) {
-  const PROXY_URL = process.env.X_PLAY_PROXY || '';
+  const PROXY_URL =
+    process.env.X_PLAY_USE_PROXY === 'true'
+      ? process.env.X_PLAY_PROXY || ''
+      : '';
   const args = [
     '--no-warnings',
     '--no-playlist',
@@ -153,25 +152,15 @@ async function buildBypassArgs(extra = []) {
     '--geo-bypass',
     '--geo-bypass-country', GEO_COUNTRY,
 
-    /* Reliable extractor client only (web) */
+    /* Try clients with less restrictive IP checks */
     '--extractor-args',
-    'youtube:player_client=web',
+    'youtube:player_client=tv,ios,android',
 
     /* Bypass age gate and consent */
     '--age-limit', '99',
     '--extractor-args',
     'youtube:skip=translated_subs',
   ];
-
-  const cookiesB64 = String(process.env.YT_COOKIES_B64 || '').trim();
-  if (cookiesB64) {
-    fs.writeFileSync(
-      YT_COOKIES_FILE,
-      Buffer.from(cookiesB64, 'base64').toString('utf8'),
-      { mode: 0o600 }
-    );
-    args.push('--cookies', YT_COOKIES_FILE);
-  }
 
   return args.concat(extra);
 }
