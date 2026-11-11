@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PDFDocument } from 'pdf-lib'
+import sharp from 'sharp'
 
 import {
   searchMovie,
@@ -6204,15 +6205,52 @@ register(
         throw new Error('FILE_TOO_LARGE')
       }
 
+      let thumbnailBuffer
+      if (result.thumbnailUrl) {
+        try {
+          const response = await fetch(result.thumbnailUrl, {
+            signal: AbortSignal.timeout(15000)
+          })
+
+          if (!response.ok) {
+            throw new Error(`Thumbnail request failed with status ${response.status}`)
+          }
+
+          const imageBuffer = Buffer.from(await response.arrayBuffer())
+          if (!imageBuffer.length) throw new Error('Thumbnail response was empty')
+
+          thumbnailBuffer = await sharp(imageBuffer)
+            .resize(320, 320, { fit: 'inside', withoutEnlargement: true })
+            .jpeg({ quality: 80 })
+            .toBuffer()
+        } catch (error) {
+          console.warn('[X PLAY] thumbnail fetch failed:', error?.message || error)
+        }
+      }
+
+      const audioMessage = {
+        audio,
+        mimetype: result.mimetype || 'audio/mpeg',
+        fileName:
+          result.fileName ||
+          `${result.artist || 'Unknown'} - ${result.title || 'Audio'}.mp3`
+      }
+
+      if (thumbnailBuffer) {
+        audioMessage.contextInfo = {
+          externalAdReply: {
+            title: result.title || 'Unknown',
+            body: result.artist || 'Unknown',
+            mediaType: 1,
+            thumbnail: thumbnailBuffer,
+            renderLargerThumbnail: true
+          }
+        }
+      }
+
       await runtime.safeSendMessage(
         group.group_id,
-        {
-          audio,
-          mimetype: result.mimetype || 'audio/mpeg',
-          fileName:
-            result.fileName ||
-            `${result.artist || 'Unknown'} - ${result.title || 'Audio'}.mp3`
-        },
+        audioMessage,
         { label: 'play audio result' }
       )
 

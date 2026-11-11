@@ -374,6 +374,7 @@ export async function playResolve(query) {
         duration: actualDuration,
         fileName: `${base}.mp3`,
         mimetype: 'audio/mpeg',
+        thumbnailUrl: metadata?.thumbnail || video.thumbnail || null,
       };
     } catch (error) {
       console.error('[X PLAY] resolver error:', error);
