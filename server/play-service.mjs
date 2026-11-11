@@ -133,8 +133,6 @@ async function buildBypassArgs(extra = []) {
     '--no-playlist',
     '--ignore-config',
     '--no-check-certificates',
-    '--js-runtimes', 'node:/usr/local/bin/node',
-    '--remote-components', 'ejs:github',
 
     /* Retries — survive throttling and transient blocks */
     '--retries', '10',
