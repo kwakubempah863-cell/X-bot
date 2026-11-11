@@ -12,4 +12,15 @@ for i in $(seq 1 30); do
   sleep 0.5
 done
 
+# Setup WARP (idempotent: only runs if config missing)
+if [ ! -f /tmp/wgcf-account.toml ]; then
+  wgcf register --accept-tos
+  wgcf generate
+  mv wgcf-profile.conf /tmp/
+fi
+
+# Start wireproxy as a SOCKS5 proxy on port 40000
+wireproxy -c /tmp/wgcf-profile.conf --bind 127.0.0.1:40000 &
+sleep 2
+
 exec npm start

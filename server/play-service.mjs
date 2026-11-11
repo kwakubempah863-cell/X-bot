@@ -127,10 +127,7 @@ function runProcess(
  * BYPASS: build yt-dlp args with all the tricks
  * ----------------------------------------------------- */
 async function buildBypassArgs(extra = []) {
-  const PROXY_URL =
-    process.env.X_PLAY_USE_PROXY === 'true'
-      ? process.env.X_PLAY_PROXY || ''
-      : '';
+  const PROXY_URL = process.env.X_PLAY_PROXY || 'socks5://127.0.0.1:40000';
   const args = [
     '--no-warnings',
     '--no-playlist',
