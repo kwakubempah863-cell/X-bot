@@ -5,6 +5,7 @@ import yts from 'yt-search';
 import ffmpeg from 'fluent-ffmpeg';
 import sanitize from 'sanitize-filename';
 import pLimit from 'p-limit';
+import sharp from 'sharp';
 
 const MAX_MB =
   Number(process.env.X_PLAY_MAX_MB || 25);
@@ -363,6 +364,32 @@ export async function playResolve(query) {
         throw new Error('EMPTY_OUTPUT');
       }
 
+      let thumbnailBuffer = null;
+      const thumbnailUrl = metadata?.thumbnail || video.thumbnail;
+      if (thumbnailUrl) {
+        try {
+          const response = await fetch(thumbnailUrl, {
+            signal: AbortSignal.timeout(15000),
+          });
+          if (!response.ok) {
+            throw new Error(`Thumbnail request failed with status ${response.status}`);
+          }
+
+          const imageBuffer = Buffer.from(await response.arrayBuffer());
+          if (!imageBuffer.length) throw new Error('Thumbnail response was empty');
+          if (imageBuffer.length > 5 * 1024 * 1024) {
+            throw new Error('Thumbnail response exceeded 5 MB');
+          }
+
+          thumbnailBuffer = await sharp(imageBuffer)
+            .resize(320, 320, { fit: 'inside', withoutEnlargement: true })
+            .jpeg({ quality: 80 })
+            .toBuffer();
+        } catch (error) {
+          console.warn('[X PLAY] thumbnail fetch failed:', error?.message || error);
+        }
+      }
+
       return {
         buffer,
         title: metadata?.title || video.title || 'Unknown',
@@ -374,7 +401,7 @@ export async function playResolve(query) {
         duration: actualDuration,
         fileName: `${base}.mp3`,
         mimetype: 'audio/mpeg',
-        thumbnailUrl: metadata?.thumbnail || video.thumbnail || null,
+        thumbnailBuffer,
       };
     } catch (error) {
       console.error('[X PLAY] resolver error:', error);
