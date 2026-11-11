@@ -12,15 +12,25 @@ for i in $(seq 1 30); do
   sleep 0.5
 done
 
-# Setup WARP (idempotent: only runs if config missing)
-if [ ! -f /tmp/wgcf-account.toml ]; then
-  wgcf register --accept-tos
-  wgcf generate
-  mv wgcf-profile.conf /tmp/
+# Check if the Base64 config is provided via env var
+if [ -n "$X_WARP_CONFIG_B64" ]; then
+    echo "Using provided WARP config from environment variable..."
+    echo "$X_WARP_CONFIG_B64" | base64 -d > /tmp/wgcf-profile.conf
+elif [ ! -f /tmp/wgcf-account.toml ]; then
+    echo "Attempting to register WARP..."
+    wgcf register --accept-tos
+    wgcf generate
+    mv wgcf-profile.conf /tmp/
+else
+    echo "Using existing WARP config..."
 fi
 
-# Start wireproxy as a SOCKS5 proxy on port 40000
-wireproxy -c /tmp/wgcf-profile.conf --bind 127.0.0.1:40000 &
-sleep 2
+# Start wireproxy using the config
+if [ -f /tmp/wgcf-profile.conf ]; then
+    wireproxy -c /tmp/wgcf-profile.conf --bind 127.0.0.1:40000 &
+    sleep 2
+else
+    echo "WARNING: No WARP config found. Proxy may not work."
+fi
 
 exec npm start
