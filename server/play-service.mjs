@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -15,8 +14,6 @@ const MAX_DURATION =
 
 const TIMEOUT_MS =
   Number(process.env.X_PLAY_TIMEOUT_MS || 30000);
-
-const YT_COOKIES_FILE = '/tmp/yt-cookies.txt';
 
 const CONCURRENCY =
   Number(process.env.X_PLAY_CONCURRENCY || 2);
@@ -130,7 +127,6 @@ function runProcess(
  * BYPASS: build yt-dlp args with all the tricks
  * ----------------------------------------------------- */
 async function buildBypassArgs(extra = []) {
-  const PROXY_URL = process.env.X_PLAY_PROXY || 'socks5://127.0.0.1:40000';
   const args = [
     '--no-warnings',
     '--no-playlist',
@@ -146,7 +142,6 @@ async function buildBypassArgs(extra = []) {
     '--extractor-retries', '5',
     '--socket-timeout', '30',
     '--force-ipv4',
-    ...(PROXY_URL ? ['--proxy', PROXY_URL] : []),
 
     /* Geo bypass */
     '--geo-bypass',
@@ -154,29 +149,7 @@ async function buildBypassArgs(extra = []) {
 
     /* Bypass age gate and consent */
     '--age-limit', '99',
-    '--extractor-args',
-    'youtube:skip=translated_subs',
-
-    /* Cookies — only attach if valid */
-    ...(() => {
-      const cookiesB64 = String(process.env.YT_COOKIES_B64 || '').trim();
-      if (!cookiesB64) {
-        console.warn('[X PLAY] YT_COOKIES_B64 not set; skipping cookies');
-        return [];
-      }
-      fs.writeFileSync(
-        YT_COOKIES_FILE,
-        Buffer.from(cookiesB64, 'base64').toString('utf8'),
-        { mode: 0o600 },
-      );
-      const stat = fs.statSync(YT_COOKIES_FILE);
-      console.log('[X PLAY] Cookies file size:', stat.size, 'bytes');
-      if (stat.size < 100) {
-        console.warn('[X PLAY] Cookies file too small (<100 bytes); skipping');
-        return [];
-      }
-      return ['--cookies', YT_COOKIES_FILE];
-    })(),
+    '--extractor-args', 'youtube:player_client=android',
   ];
 
   return args.concat(extra);
@@ -266,10 +239,7 @@ async function downloadAudio(url, outputPath) {
   ]);
 
   try {
-    const loggedArgs = args.map((arg, index) =>
-      args[index - 1] === '--proxy' ? '[REDACTED]' : arg
-    );
-    console.log('[X PLAY] Executing:', YTDLP_BIN, loggedArgs.join(' '));
+    console.log('[X PLAY] Executing:', YTDLP_BIN, args.join(' '));
     await runProcess(YTDLP_BIN, args, {
       timeoutMs: Math.max(TIMEOUT_MS, 120000),
     });
