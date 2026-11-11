@@ -30,16 +30,25 @@ export async function usePostgresAuthState(sessionId = 'default') {
   `)
 
   const readCreds = async () => {
-    const { rows } = await db.query(
-      'SELECT value FROM baileys_pg_auth WHERE session_id = $1 AND key_id = $2',
-      [sessionId, 'creds']
-    )
+    let lastError;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const { rows } = await db.query(
+          'SELECT value FROM baileys_pg_auth WHERE session_id = $1 AND key_id = $2',
+          [sessionId, 'creds']
+        )
 
-    if (rows[0]) {
-      return JSON.parse(rows[0].value, BufferJSON.reviver)
+        if (rows[0]) {
+          return JSON.parse(rows[0].value, BufferJSON.reviver)
+        }
+
+        return initAuthCreds()
+      } catch (error) {
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
     }
-
-    return initAuthCreds()
+    throw new Error('Neon unreachable at startup: failed to read auth state after 3 attempts');
   }
 
   const writeCreds = async (data) => {
@@ -92,21 +101,19 @@ export async function usePostgresAuthState(sessionId = 'default') {
         }
         await client.query('COMMIT')
       } catch (error) {
-        await client.query('ROLLBACK')
-        throw error
+        try { await client.query('ROLLBACK'); } catch {}
+        throw error;
       } finally {
-        client.release()
+        client.release();
       }
     },
   }
 
   const creds = await readCreds()
 
+  const state = { creds, keys };
   return {
-    state: {
-      creds,
-      keys,
-    },
-    saveCreds: () => writeCreds(creds),
+    state,
+    saveCreds: () => writeCreds(state.creds),
   }
 }

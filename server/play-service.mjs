@@ -30,9 +30,7 @@ const YTDLP_BIN =
 const YT_COOKIES_FILE =
   '/tmp/yt-cookies.txt';
 
-/* ---- BYPASS: optional PO token / visitor data ---- */
-const PO_TOKEN =
-  process.env.X_PLAY_PO_TOKEN || '';
+
 
 /* ---- BYPASS: geo spoof country ---- */
 const GEO_COUNTRY =
@@ -135,6 +133,14 @@ function runProcess(
  * BYPASS: build yt-dlp args with all the tricks
  * ----------------------------------------------------- */
 async function buildBypassArgs(extra = []) {
+  let poToken = '';
+  try {
+    const res = await fetch('http://127.0.0.1:4416/token', { method: 'POST' });
+    if (res.ok) poToken = (await res.text()).trim();
+  } catch (err) {
+    console.error('[X PLAY] PO provider fetch failed:', err.message);
+  }
+
   const args = [
     '--no-warnings',
     '--no-playlist',
@@ -149,7 +155,6 @@ async function buildBypassArgs(extra = []) {
     '--extractor-retries', '5',
     '--socket-timeout', '30',
     '--force-ipv4',
-    '--js-runtimes', `node:${process.execPath}`,
 
     /* Geo bypass */
     '--geo-bypass',
@@ -176,10 +181,10 @@ async function buildBypassArgs(extra = []) {
   }
 
   /* PO token bypass */
-  if (PO_TOKEN) {
+  if (poToken) {
     args.push(
       '--extractor-args',
-      `youtube:po_token=web+${PO_TOKEN}`
+      `youtube:po_token=web+${poToken}`
     );
   }
 

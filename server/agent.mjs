@@ -17,6 +17,14 @@ import {
 import { answerWithConfiguredProvider } from './ai-context.mjs'
 
 /* -------------------------------------------------------------------------- */
+/* Provider resolver                                                          */
+/* -------------------------------------------------------------------------- */
+
+function resolveProvider() {
+  return (process.env.X_AI_PROVIDER || 'gemini').trim().toLowerCase();
+}
+
+/* -------------------------------------------------------------------------- */
 /* Reply-to-X detection                                                       */
 /* -------------------------------------------------------------------------- */
 
@@ -343,7 +351,7 @@ export function filterDMResponse(text) {
 /* -------------------------------------------------------------------------- */
 
 async function callProvider(system, user) {
-  const provider = (process.env.X_AI_PROVIDER || 'gemini').toLowerCase()
+  const provider = resolveProvider();
 
   if (provider === 'gemini') {
     const apiKey = process.env.GEMINI_API_KEY
@@ -597,7 +605,7 @@ export async function generateReply({
 
   let raw
   try {
-    const provider = String(process.env.X_AI_PROVIDER ?? '').trim().toLowerCase()
+    const provider = resolveProvider();
     if (provider === 'openai' && !hasOpenAIApiKey()) {
       const localAnswer = await answerWithConfiguredProvider(groupId, trimmed)
       raw = localAnswer.text
