@@ -15,7 +15,7 @@
     "runtime": "node --env-file=.env server/index.mjs",
     "runtime:dev": "node --env-file=.env server/index.mjs",
     "pair:qr": "node --env-file=.env server/index.mjs",
-    "start": "node server/index.mjs"
+    "start": "node --env-file=.env server/index.mjs"
   },
   "devDependencies": {
     "tsx": "4.20.5",
