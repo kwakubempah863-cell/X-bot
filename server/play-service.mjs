@@ -30,6 +30,8 @@ const YTDLP_BIN =
 const YT_COOKIES_FILE =
   '/tmp/yt-cookies.txt';
 
+let cachedPoToken = { value: '', expiresAt: 0 };
+
 
 
 /* ---- BYPASS: geo spoof country ---- */
@@ -134,11 +136,23 @@ function runProcess(
  * ----------------------------------------------------- */
 async function buildBypassArgs(extra = []) {
   let poToken = '';
-  try {
-    const res = await fetch('http://127.0.0.1:4416/token', { method: 'POST' });
-    if (res.ok) poToken = (await res.text()).trim();
-  } catch (err) {
-    console.error('[X PLAY] PO provider fetch failed:', err.message);
+  if (Date.now() < cachedPoToken.expiresAt) {
+    poToken = cachedPoToken.value;
+  } else {
+    try {
+      const res = await fetch('http://127.0.0.1:4416/token', { method: 'POST' });
+      if (res.ok) {
+        poToken = (await res.text()).trim();
+        if (poToken) {
+          cachedPoToken = {
+            value: poToken,
+            expiresAt: Date.now() + 3600_000,
+          };
+        }
+      }
+    } catch (err) {
+      console.error('[X PLAY] PO provider fetch failed:', err.message);
+    }
   }
 
   const args = [

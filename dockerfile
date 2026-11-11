@@ -5,11 +5,9 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     ffmpeg \
-    curl \
     git \
-    && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
-    && chmod a+rx /usr/local/bin/yt-dlp \
-    && python3 -m pip install --break-system-packages --upgrade "yt-dlp>=2025.05.22" \
+    && pip3 install --break-system-packages "yt-dlp[default]" \
+    && yt-dlp --version \
     && python3 -m pip install --break-system-packages --upgrade bgutil-ytdlp-pot-provider \
     && git clone --single-branch --branch 2.0.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/pot-provider \
     && cd /opt/pot-provider/server \

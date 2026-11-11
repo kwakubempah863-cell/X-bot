@@ -367,7 +367,7 @@ export class WhatsAppRuntime {
         markOnlineOnConnect: false,
 
         connectTimeoutMs: 60_000,
-        defaultQueryTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 120_000,
         retryRequestDelayMs: 500
       })
 
