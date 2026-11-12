@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PDFDocument } from 'pdf-lib'
-import { ping } from 'quick-ping-util'
+import ping from 'ping'
+import yts from 'yt-search'
 
 import {
   searchMovie,
@@ -965,12 +966,9 @@ register(
     description: 'Check network connectivity'
   },
   async () => {
-    const result = await ping('8.8.8.8', { count: 3 })
-    if (!result.alive) return 'Ping failed: Host unreachable.'
-
-    const latency =
-      result.latency === null ? 'unavailable' : `${result.latency}ms`
-    return `🏓 Pong! Latency: ${latency}`
+    const res = await ping.promise.probe('8.8.8.8', { timeout: 5 })
+    const speed = res.alive ? `${res.time}ms` : 'Timeout'
+    return `🏓 Pong!\n📡 Latency: ${speed}\n⚡ Uptime: ${Math.floor(process.uptime())}s`
   }
 )
 
@@ -5781,13 +5779,28 @@ register(
       ].join('\n')
     }
 
-    const result = await lyricsSearch(query)
+    let lyricsQuery = query
+    if (!/\s[-–—]\s/.test(query)) {
+      const searchResults = await yts(query)
+      const firstResult = searchResults?.videos?.[0]
+
+      if (firstResult?.title) {
+        lyricsQuery = firstResult.title
+          .replace(/\s+[|•]\s+.*$/, '')
+          .replace(/\b(?:official|music\s+video|lyrics)\b/gi, ' ')
+          .replace(/[()[\]]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+      }
+    }
+
+    const result = await lyricsSearch(lyricsQuery)
 
     if (!result) {
       return [
         '🎤 *X LYRICS — KAIN MODE*',
         '',
-        `❌ Could not find lyrics for *${query}*.`,
+        `❌ Could not find lyrics for *${lyricsQuery}*.`,
         'Try adding the artist: `.lyrics <song> - <artist>`'
       ].join('\n')
     }

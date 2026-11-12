@@ -13,7 +13,8 @@ function getPool() {
   if (!pool) {
     pool = new Pool({
       connectionString: process.env.DATABASE_URL,
-      idleTimeoutMillis: 30000,
+      idleTimeoutMillis: 10000,
+      max: 20,
     })
   }
 
@@ -32,30 +33,38 @@ export async function usePostgresAuthState(sessionId = 'default') {
     )
   `)
 
-  const readCreds = async () => {
-    let lastError;
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      try {
-        const { rows } = await db.query(
-          'SELECT value FROM baileys_pg_auth WHERE session_id = $1 AND key_id = $2',
-          [sessionId, 'creds']
-        )
+  const queryCredsWithRetry = async (query, values) => {
+    try {
+      return await db.query(query, values)
+    } catch (error) {
+      const message = String(error?.message || '')
+      const isConnectionError =
+        error?.code === 'ECONNRESET' ||
+        message.toLowerCase().includes('connection terminated') ||
+        message.includes('ECONNRESET')
 
-        if (rows[0]) {
-          return JSON.parse(rows[0].value, BufferJSON.reviver)
-        }
+      if (!isConnectionError) throw error
 
-        return initAuthCreds()
-      } catch (error) {
-        lastError = error;
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
+      console.warn('[X AUTH] Postgres connection interrupted; retrying credentials query once')
+      return db.query(query, values)
     }
-    throw new Error('Neon unreachable at startup: failed to read auth state after 3 attempts');
+  }
+
+  const readCreds = async () => {
+    const { rows } = await queryCredsWithRetry(
+      'SELECT value FROM baileys_pg_auth WHERE session_id = $1 AND key_id = $2',
+      [sessionId, 'creds']
+    )
+
+    if (rows[0]) {
+      return JSON.parse(rows[0].value, BufferJSON.reviver)
+    }
+
+    return initAuthCreds()
   }
 
   const writeCreds = async (data) => {
-    await db.query(`
+    await queryCredsWithRetry(`
       INSERT INTO baileys_pg_auth (session_id, key_id, value)
       VALUES ($1, $2, $3)
       ON CONFLICT (session_id, key_id)
