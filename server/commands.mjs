@@ -1,9 +1,9 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PDFDocument } from 'pdf-lib'
-import sharp from 'sharp'
+import cheerio from 'cheerio-without-node-native'
 import yts from 'yt-search'
-import lyricsFinder from 'lyrics-finder'
+import { getSong, searchSong } from 'genius-lyrics-api'
 import speedTest from 'speedtest-net'
 
 import {
@@ -143,8 +143,7 @@ import {
   animeQuote,
   anilistSearch,
   giphySearch,
-  nekosRandom,
-  lyricsSearch
+  nekosRandom
 } from './providers.mjs'
 
 import {
@@ -969,7 +968,7 @@ register(
   },
   async () => {
     try {
-      const data = await speedTest()
+      const data = await speedTest({ maxTime: 5000, acceptLicense: true })
       const latency = Number(data?.ping?.latency)
       const download = Number(data?.download?.bandwidth)
       const upload = Number(data?.upload?.bandwidth)
@@ -5807,61 +5806,100 @@ register(
       console.warn('[X LYRICS] YouTube search failed:', error?.message || error)
     }
 
-    const videoTitle = String(video?.title || '')
+    const cleanMetadata = (value) => String(value || '')
       .replace(/\s+[|•]\s+.*$/, '')
-      .replace(/\b(?:official|music\s+video|lyrics)\b/gi, ' ')
       .replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
+      .replace(/\b(?:official(?:\s+(?:music\s+)?(?:video|audio))?|music\s+video|video|audio|lyrics?|hd|4k)\b/gi, ' ')
       .replace(/\s+/g, ' ')
       .trim()
-    const parts = query.split(/\s+[-–—]\s+/).map((part) => part.trim())
-    const candidates = []
+    let title = cleanMetadata(video?.title || query) || cleanMetadata(query)
+    let artist = cleanMetadata(video?.author?.name || '')
+      .replace(/\s+-\s+topic$/i, '')
+      .trim()
 
-    if (videoTitle && video?.author?.name) {
-      candidates.push({ artist: video.author.name, title: videoTitle })
+    const titleParts = title
+      .split(/\s+[-–—]\s+/)
+      .map(cleanMetadata)
+      .filter(Boolean)
+    if (titleParts.length > 1) {
+      const artistIndex = artist
+        ? titleParts.findIndex((part) => part.toLowerCase() === artist.toLowerCase())
+        : -1
+
+      if (artistIndex >= 0) {
+        artist = titleParts[artistIndex]
+        title = titleParts.filter((_, index) => index !== artistIndex).join(' - ')
+      } else if (!artist) {
+        artist = titleParts[0]
+        title = titleParts.slice(1).join(' - ')
+      }
     }
 
-    if (parts.length >= 2) {
-      const left = parts[0]
-      const right = parts.slice(1).join(' - ')
-      candidates.push({ artist: left, title: right })
-      candidates.push({ artist: right, title: left })
-    } else if (videoTitle) {
-      candidates.push({ artist: video?.author?.name || '', title: videoTitle })
+    const geniusToken = process.env.GENIUS_ACCESS_TOKEN
+    if (!geniusToken) {
+      return '❌ Genius lyrics search is unavailable: GENIUS_ACCESS_TOKEN is not configured.'
     }
 
-    let lyrics = ''
-    let title = videoTitle || query
-    let artist = video?.author?.name || 'Unknown artist'
-    for (const candidate of candidates) {
-      if (!candidate.artist || !candidate.title) continue
+    const geniusOptions = {
+      title,
+      artist,
+      apiKey: geniusToken,
+      optimizeQuery: true
+    }
+    let song
+    try {
+      song = await getSong(geniusOptions)
+    } catch (error) {
+      console.warn('[X LYRICS] Genius song lookup failed:', error?.message || error)
+    }
+
+    let lyrics = String(song?.lyrics || '').trim()
+    let albumArt = song?.albumArt || ''
+    if (!lyrics) {
       try {
-        lyrics = String(await lyricsFinder(candidate.artist, candidate.title) || '').trim()
+        const searchResults = await searchSong(geniusOptions)
+        const match = searchResults?.[0]
+        if (match?.url) {
+          const songUrl = new URL(match.url)
+          if (
+            songUrl.protocol !== 'https:' ||
+            !/(^|\.)genius\.com$/i.test(songUrl.hostname)
+          ) {
+            throw new Error('Genius returned an invalid song URL')
+          }
+
+          const response = await fetch(songUrl.toString(), {
+            headers: { 'user-agent': 'Mozilla/5.0' },
+            signal: AbortSignal.timeout(15000)
+          })
+          if (!response.ok) {
+            throw new Error(`Genius page request failed with status ${response.status}`)
+          }
+
+          const html = await response.text()
+          const $ = cheerio.load(html)
+          lyrics = $('div[data-lyrics-container="true"]')
+            .map((_, element) => {
+              const containerHtml = $(element).html() || ''
+              const withLineBreaks = containerHtml
+                .replace(/<br\s*\/?>/gi, '\n')
+                .replace(/<\/(?:p|div)>/gi, '\n')
+              return cheerio
+                .load(`<div>${withLineBreaks}</div>`)('div')
+                .first()
+                .text()
+            })
+            .get()
+            .join('\n')
+          albumArt = match.albumArt || albumArt
+        }
       } catch (error) {
-        console.warn('[X LYRICS] lyrics-finder failed:', error?.message || error)
-      }
-      if (lyrics) {
-        title = candidate.title
-        artist = candidate.artist
-        break
+        console.warn('[X LYRICS] Genius page fallback failed:', error?.message || error)
       }
     }
 
     if (!lyrics) {
-      const result = await lyricsSearch(query)
-      if (result) {
-        lyrics = result.lyrics
-        title = result.title
-        artist = result.artist
-      }
-    }
-
-    if (!lyrics) {
-      return [
-        '🎤 *X LYRICS — KAIN MODE*',
-        '',
-        `❌ Could not find lyrics for *${query}*.`,
-        'Try adding the artist: `.lyrics <song> - <artist>`'
-      ].join('\n')
+      return '❌ Could not find lyrics for this track.'
     }
 
     const cleanLyrics = lyrics
@@ -5878,41 +5916,13 @@ register(
       return '❌ Lyrics were found, but no readable lyrics remained after cleanup.'
     }
 
-    const caption = `🎤 **${title}**\n👤 ${artist}\n\n${cleanLyrics}`
-    let thumbnailBuffer = null
+    const caption = `🎤 **${title}**\n👤 ${artist || 'Unknown artist'}\n\n${cleanLyrics}`
+    const imageUrl = albumArt || video?.thumbnail
 
-    if (video?.thumbnail) {
-      try {
-        const response = await fetch(video.thumbnail, {
-          signal: AbortSignal.timeout(15000)
-        })
-        if (!response.ok) {
-          throw new Error(`Thumbnail request failed with status ${response.status}`)
-        }
-
-        const contentLength = Number(response.headers.get('content-length') || 0)
-        if (contentLength > 5 * 1024 * 1024) {
-          throw new Error('Thumbnail response exceeded 5 MB')
-        }
-
-        const imageBuffer = Buffer.from(await response.arrayBuffer())
-        if (!imageBuffer.length || imageBuffer.length > 5 * 1024 * 1024) {
-          throw new Error('Thumbnail response was empty or exceeded 5 MB')
-        }
-
-        thumbnailBuffer = await sharp(imageBuffer)
-          .resize(320, 320, { fit: 'inside', withoutEnlargement: true })
-          .jpeg({ quality: 80 })
-          .toBuffer()
-      } catch (error) {
-        console.warn('[X LYRICS] thumbnail fetch failed:', error?.message || error)
-      }
-    }
-
-    if (thumbnailBuffer && group?.group_id && runtime?.safeSendMessage) {
+    if (imageUrl && group?.group_id && runtime?.safeSendMessage) {
       await runtime.safeSendMessage(
         group.group_id,
-        { image: thumbnailBuffer, caption },
+        { image: { url: imageUrl }, caption },
         { label: 'lyrics card' }
       )
       return null
