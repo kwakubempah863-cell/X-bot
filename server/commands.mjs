@@ -1,8 +1,10 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PDFDocument } from 'pdf-lib'
-import ping from 'ping'
+import sharp from 'sharp'
 import yts from 'yt-search'
+import lyricsFinder from 'lyrics-finder'
+import speedTest from 'speedtest-net'
 
 import {
   searchMovie,
@@ -963,12 +965,30 @@ register(
   'ping',
   {
     category: 'core',
-    description: 'Check network connectivity'
+    description: 'Measure real-world ping, download, and upload speeds'
   },
   async () => {
-    const res = await ping.promise.probe('8.8.8.8', { timeout: 5 })
-    const speed = res.alive ? `${res.time}ms` : 'Timeout'
-    return `🏓 Pong!\n📡 Latency: ${speed}\n⚡ Uptime: ${Math.floor(process.uptime())}s`
+    try {
+      const data = await speedTest()
+      const latency = Number(data?.ping?.latency)
+      const download = Number(data?.download?.bandwidth)
+      const upload = Number(data?.upload?.bandwidth)
+
+      if (![latency, download, upload].every(Number.isFinite)) {
+        throw new Error('Speed test returned incomplete results')
+      }
+
+      return [
+        '⚡ *X SPEED TEST*',
+        '',
+        `📡 Ping: ${latency.toFixed(0)}ms`,
+        `⬇️ Down: ${(download / 125000).toFixed(2)} Mbps`,
+        `⬆️ Up: ${(upload / 125000).toFixed(2)} Mbps`
+      ].join('\n')
+    } catch (error) {
+      console.error('[X PING] speed test failed:', error)
+      return `❌ Speed test failed: ${error?.message || String(error)}`
+    }
   }
 )
 
@@ -5760,10 +5780,10 @@ register(
   {
     category: 'media',
     reaction: '🎤',
-    description: 'Search for a song and return its lyrics in Kain style',
+    description: 'Search for a song and return cleaned lyrics with a thumbnail',
     usage: '.lyrics <song> [ - artist]'
   },
-  async ({ args }) => {
+  async ({ args, runtime, group }) => {
     const query = args.join(' ').trim()
 
     if (!query) {
@@ -5779,103 +5799,126 @@ register(
       ].join('\n')
     }
 
-    let lyricsQuery = query
-    if (!/\s[-–—]\s/.test(query)) {
+    let video
+    try {
       const searchResults = await yts(query)
-      const firstResult = searchResults?.videos?.[0]
+      video = searchResults?.videos?.[0]
+    } catch (error) {
+      console.warn('[X LYRICS] YouTube search failed:', error?.message || error)
+    }
 
-      if (firstResult?.title) {
-        lyricsQuery = firstResult.title
-          .replace(/\s+[|•]\s+.*$/, '')
-          .replace(/\b(?:official|music\s+video|lyrics)\b/gi, ' ')
-          .replace(/[()[\]]/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim()
+    const videoTitle = String(video?.title || '')
+      .replace(/\s+[|•]\s+.*$/, '')
+      .replace(/\b(?:official|music\s+video|lyrics)\b/gi, ' ')
+      .replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    const parts = query.split(/\s+[-–—]\s+/).map((part) => part.trim())
+    const candidates = []
+
+    if (videoTitle && video?.author?.name) {
+      candidates.push({ artist: video.author.name, title: videoTitle })
+    }
+
+    if (parts.length >= 2) {
+      const left = parts[0]
+      const right = parts.slice(1).join(' - ')
+      candidates.push({ artist: left, title: right })
+      candidates.push({ artist: right, title: left })
+    } else if (videoTitle) {
+      candidates.push({ artist: video?.author?.name || '', title: videoTitle })
+    }
+
+    let lyrics = ''
+    let title = videoTitle || query
+    let artist = video?.author?.name || 'Unknown artist'
+    for (const candidate of candidates) {
+      if (!candidate.artist || !candidate.title) continue
+      try {
+        lyrics = String(await lyricsFinder(candidate.artist, candidate.title) || '').trim()
+      } catch (error) {
+        console.warn('[X LYRICS] lyrics-finder failed:', error?.message || error)
+      }
+      if (lyrics) {
+        title = candidate.title
+        artist = candidate.artist
+        break
       }
     }
 
-    const result = await lyricsSearch(lyricsQuery)
+    if (!lyrics) {
+      const result = await lyricsSearch(query)
+      if (result) {
+        lyrics = result.lyrics
+        title = result.title
+        artist = result.artist
+      }
+    }
 
-    if (!result) {
+    if (!lyrics) {
       return [
         '🎤 *X LYRICS — KAIN MODE*',
         '',
-        `❌ Could not find lyrics for *${lyricsQuery}*.`,
+        `❌ Could not find lyrics for *${query}*.`,
         'Try adding the artist: `.lyrics <song> - <artist>`'
       ].join('\n')
     }
 
-    const rawLyrics = result.lyrics
-      .replace(/\r\n/g, '\n')
-      .replace(/\n{3,}/g, '\n\n')
+    const cleanLyrics = lyrics
+      .replace(/\r\n?/g, '\n')
+      .replace(/\[[^\]]*\]|\([^)]*\)/g, '')
+      .replace(/\bhttps?:\/\/\S+|www\.\S+/gi, '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .join('\n')
       .trim()
 
-    const stanzas = rawLyrics
-      .split(/\n{2,}/)
-      .map((s) => s.trim())
-      .filter(Boolean)
-
-    const SECTION_LABELS = [
-      '[Intro]',
-      '[Verse 1]',
-      '[Pre-Chorus]',
-      '[Chorus]',
-      '[Verse 2]',
-      '[Bridge]',
-      '[Final Chorus]',
-      '[Outro]'
-    ]
-
-    const PROD_CUES = [
-      'dark pop R&B, cinematic atmosphere, electronic pulse',
-      'minimal beat, suspended chords, cinematic pause',
-      'beat drops out, vocal layers, tension building',
-      'fuller production, violin swell, steady groove',
-      'stripped back, heartbeat only, spoken-sung',
-      'peak energy, emotional but controlled',
-      'decelerando, ambient fade, signature outro'
-    ]
-
-    const built = []
-
-    built.push(`🎤 *${result.title.toUpperCase()}*`)
-    built.push(`— ${result.artist}`)
-    built.push('')
-    built.push('▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰')
-    built.push('')
-
-    stanzas.forEach((stanza, index) => {
-      const label = SECTION_LABELS[index] || `[Section ${index + 1}]`
-      const cue = PROD_CUES[index % PROD_CUES.length]
-
-      built.push(`${label} – ${cue}`)
-      built.push('')
-
-      const lines = stanza
-        .split('\n')
-        .map((l) => l.trim())
-        .filter(Boolean)
-
-      lines.forEach((line) => {
-        built.push(line)
-      })
-
-      built.push('')
-    })
-
-    built.push('▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰')
-    built.push('')
-    built.push('⚡ X LYRICS — KAIN MODE')
-
-    const output = built.join('\n')
-
-    const MAX = 3500
-
-    if (output.length > MAX) {
-      return output.slice(0, MAX).trimEnd() + '\n\n… (truncated)'
+    if (!cleanLyrics) {
+      return '❌ Lyrics were found, but no readable lyrics remained after cleanup.'
     }
 
-    return output
+    const caption = `🎤 **${title}**\n👤 ${artist}\n\n${cleanLyrics}`
+    let thumbnailBuffer = null
+
+    if (video?.thumbnail) {
+      try {
+        const response = await fetch(video.thumbnail, {
+          signal: AbortSignal.timeout(15000)
+        })
+        if (!response.ok) {
+          throw new Error(`Thumbnail request failed with status ${response.status}`)
+        }
+
+        const contentLength = Number(response.headers.get('content-length') || 0)
+        if (contentLength > 5 * 1024 * 1024) {
+          throw new Error('Thumbnail response exceeded 5 MB')
+        }
+
+        const imageBuffer = Buffer.from(await response.arrayBuffer())
+        if (!imageBuffer.length || imageBuffer.length > 5 * 1024 * 1024) {
+          throw new Error('Thumbnail response was empty or exceeded 5 MB')
+        }
+
+        thumbnailBuffer = await sharp(imageBuffer)
+          .resize(320, 320, { fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 80 })
+          .toBuffer()
+      } catch (error) {
+        console.warn('[X LYRICS] thumbnail fetch failed:', error?.message || error)
+      }
+    }
+
+    if (thumbnailBuffer && group?.group_id && runtime?.safeSendMessage) {
+      await runtime.safeSendMessage(
+        group.group_id,
+        { image: thumbnailBuffer, caption },
+        { label: 'lyrics card' }
+      )
+      return null
+    }
+
+    return caption
   }
 )
 
