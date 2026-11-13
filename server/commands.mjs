@@ -7,6 +7,7 @@ import { getSong, searchSong } from 'genius-lyrics-api'
 import speedTest from 'speedtest-net'
 import { getSystemStats } from './utils/stats.mjs'
 
+import {
   searchMovie,
   buildResolutionMenu,
   findMovieSources,
@@ -17,10 +18,7 @@ import { getSystemStats } from './utils/stats.mjs'
   justWatchOffers,
   buildJustWatchBlock,
   movieConfig
-
 } from './movies.mjs'
-
-import db, {
 
   import db, {
   getMember,
@@ -61,7 +59,7 @@ import db, {
   register('stab', { category: 'actions', description: 'Stab a user', usage: '.stab @user' }, async (ctx) => sendActionGif('shoot', 'stab', ctx)),
   register('slap', { category: 'actions', description: 'Slap a user', usage: '.slap @user' }, async (ctx) => sendActionGif('slap', 'slap', ctx)),
   register('kick', { category: 'actions', description: 'Kick a user', usage: '.kick @user' }, async (ctx) => sendActionGif('kick', 'kick', ctx)),
-  register('bite', { category: 'actions', description: 'Bite a user', usage: '.bite @user' }, async (ctx) => sendActionGif('bite', 'bite', ctx)),
+  register('bite', { category: 'actions', description: 'Bite a user', usage: '.bite @user' }, async (ctx) => sendActionGif('bite', 'bite', ctx))
 
 import {
   awakenSequence,
@@ -142,7 +140,7 @@ function memberMention(
   _runtime,
   _groupId,
   jid
-) {
+) {}
   return createMention(jid)
 
 
