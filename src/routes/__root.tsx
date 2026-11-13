@@ -51,14 +51,14 @@ export const Route = createRootRoute({
     meta: [
       { charSet: 'utf-8' },
       { name: 'viewport', content: 'width=device-width, initial-scale=1.0' },
-      { title: 'X Control Center · BempsX' },
-      { name: 'description', content: 'Production control center for the X multifunctional WhatsApp bot.' },
+      { title: 'Velvet Devil Control Centre · BempsX' },
+      { name: 'description', content: 'Production control centre for the Velvet Devil WhatsApp bot.' },
       { name: 'theme-color', content: '#151a2d' },
       { property: 'og:type', content: 'website' },
-      { property: 'og:title', content: 'X Control Center · BempsX' },
-      { property: 'og:description', content: 'Production control center for the X multifunctional WhatsApp bot.' },
+      { property: 'og:title', content: 'Velvet Devil Control Centre · BempsX' },
+      { property: 'og:description', content: 'Production control centre for the Velvet Devil WhatsApp bot.' },
       // Shared-shell defaults — set these to the real brand/locale per app.
-      { property: 'og:site_name', content: 'X Bot · BempsX' },
+      { property: 'og:site_name', content: 'Velvet Devil Control Centre · BempsX' },
       { property: 'og:locale', content: 'en_US' },
       { name: 'twitter:card', content: 'summary_large_image' },
     ],
@@ -92,8 +92,8 @@ function RootDocument({ children }: { children: ReactNode }) {
             __html: JSON.stringify({
               '@context': 'https://schema.org',
               '@graph': [
-                { '@type': 'WebSite', name: 'X Bot', url: '/' },
-                { '@type': 'Organization', name: 'X Bot · BempsX', url: '/', sameAs: [] },
+                { '@type': 'WebSite', name: 'Velvet Devil', url: '/' },
+                { '@type': 'Organization', name: 'Velvet Devil · BempsX', url: '/', sameAs: [] },
               ],
             }),
           }}

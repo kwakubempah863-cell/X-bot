@@ -67,6 +67,7 @@ import { validateAgentConfig } from './agent.mjs'
 const API_TENANT = 'default'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const PUBLIC_DIR = path.resolve(__dirname, '..', 'public')
 const DIST_DIR = path.resolve(__dirname, '..', 'dist')
 
 const app = Fastify({
@@ -756,15 +757,32 @@ app.post('/api/menu-assets/upload', async (req, reply) => {
   }
 })
 
-app.post('/api/menu-assets', async (req, reply) => {
-  const url = String(req.body?.url || '').trim()
-  const category = String(req.body?.category || 'X branding').trim()
+app.delete('/api/menu-assets/:id', async (req, reply) => {
+  const id = String(req.params.id || '').trim()
 
-  if (!/^https:\/\//i.test(url)) {
-    return reply.code(400).send({ error: 'Menu asset URL must use HTTPS.' })
+  if (!id) {
+    return reply.code(400).send({ error: 'Menu asset ID is required.' })
   }
 
-  return addMenuAsset(API_TENANT, url, category)
+  const row = deleteMenuAsset(API_TENANT, id)
+
+  if (!row) {
+    return reply.code(404).send({ error: 'Menu asset not found.' })
+  }
+
+  return { ok: true, id: row.id }
+})
+
+app.delete('/api/menu-assets', async (req, reply) => {
+  const tenantId = req.userTenantId || API_TENANT
+
+  if (!tenantId) {
+    return reply.code(401).send({ error: 'Not authenticated.' })
+  }
+
+  const count = clearMenuAssets(tenantId)
+
+  return { ok: true, deleted: count }
 })
 
 /* -------------------------------------------------------------------------- */
@@ -1154,6 +1172,12 @@ try {
 } catch {
   serveSpa = false
 }
+
+await app.register(fastifyStatic, {
+  root: PUBLIC_DIR,
+  prefix: '/public/',
+  decorateReply: false
+})
 
 if (serveSpa) {
   await app.register(fastifyStatic, {

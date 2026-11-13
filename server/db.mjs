@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS groups (
 
   antidelete_mode TEXT NOT NULL DEFAULT 'off',
 
-  welcome_template TEXT NOT NULL DEFAULT 'Welcome {user} to *{group}*! You are member #{count}.',
+  welcome_template TEXT NOT NULL DEFAULT 'Welcome to the velvet room, {user}. 🥀 Leave your ego at the door, or I''ll tear it apart.',
   goodbye_template TEXT NOT NULL DEFAULT 'Goodbye {user}. {group} will miss you.',
 
   connection_state TEXT NOT NULL DEFAULT 'syncing',
@@ -60,29 +60,12 @@ CREATE TABLE IF NOT EXISTS groups (
   PRIMARY KEY (tenant_id, group_id)
 );
 
-CREATE TABLE IF NOT EXISTS vice_war_participants (
+ (
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  war_id TEXT NOT NULL,
-  jid TEXT NOT NULL,
-  faction_id TEXT NOT NULL,
-  side TEXT NOT NULL,
-  damage INTEGER NOT NULL DEFAULT 0,
-  attacks INTEGER NOT NULL DEFAULT 0,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY (tenant_id, war_id, jid)
-);
+  
 
-CREATE INDEX IF NOT EXISTS idx_vice_war_participants_war
-  ON vice_war_participants(tenant_id, war_id, side);
 
-CREATE TABLE IF NOT EXISTS vice_war_contracts (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL DEFAULT 'default',
-  war_id TEXT NOT NULL,
-  faction_id TEXT NOT NULL,
-  amount INTEGER NOT NULL,
-  created_at TEXT NOT NULL
-);
+
 
 CREATE TABLE IF NOT EXISTS members (
   group_id TEXT NOT NULL,
@@ -182,6 +165,12 @@ CREATE TABLE IF NOT EXISTS menu_assets (
   usage_count INTEGER NOT NULL DEFAULT 0,
 
   created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS beef_roasts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  text TEXT NOT NULL,
+  category TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS bot_settings (
@@ -343,9 +332,7 @@ CREATE TABLE IF NOT EXISTS vice_territories (
   updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS vice_wars (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL DEFAULT 'default',
+ NOT NULL DEFAULT 'default',
   group_id TEXT NOT NULL,
 
   attacker_faction_id TEXT NOT NULL,
@@ -365,8 +352,7 @@ CREATE TABLE IF NOT EXISTS vice_wars (
   winner_faction_id TEXT DEFAULT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_vice_wars_group
-  ON vice_wars(tenant_id, group_id, status);
+
 
 CREATE TABLE IF NOT EXISTS vice_seasons (
   id TEXT PRIMARY KEY,
@@ -574,6 +560,299 @@ for (const sql of migrations) {
     /* Column already exists. */
   }
 }
+
+const starterRoasts = [
+  "Your birth certificate is an apology letter from the condom factory.",
+  "You bring everyone so much joy when you leave the room.",
+  "I'd agree with you, but then we'd both be wrong.",
+  "You're not stupid; you just have bad luck when thinking.",
+  "Somewhere out there is a tree tirelessly producing oxygen for you. You owe it an apology.",
+  "You're the reason the gene pool needs a lifeguard.",
+  "If laughter is the best medicine, your face must be curing the world.",
+  "You have something on your chin... no, the third one down.",
+  "I'm jealous of all the people who haven't met you yet.",
+  "Your secrets are safe with me. I never even listen when you talk.",
+  "You're like a cloud. When you disappear, it's a beautiful day.",
+  "I was going to give you a nasty look but I see you already have one.",
+  "You're proof that evolution can go in reverse.",
+  "You're not the dumbest person on earth, but you better hope they're not breeding.",
+  "I'd slap you, but that would be animal abuse.",
+  "You're so dense, light bends around you.",
+  "You're the human version of a participation trophy.",
+  "Your family tree must be a cactus because everybody on it is a prick.",
+  "You're the reason they put instructions on shampoo bottles.",
+  "You're not completely useless. You can always serve as a bad example.",
+  "I'm not saying I hate you, but I would unplug your life support to charge my phone.",
+  "You're the kind of person who would trip over a wireless connection.",
+  "If you were any slower, you'd be going backward.",
+  "I've seen people like you before, but I had to pay admission.",
+  "You're living proof that God has a sense of humor.",
+  "Somewhere a village is missing its idiot.",
+  "You're as useful as a screen door on a submarine.",
+  "Your brain has too many tabs open and no internet connection.",
+  "You're the human equivalent of a pop-up ad.",
+  "I would explain it to you, but I left my crayons at home.",
+  "You're so boring, you could make a glass of water seem exciting.",
+  "You're the reason the middle finger was invented.",
+  "You're not the sharpest tool in the shed, but you're definitely the dullest.",
+  "I bet your parents change the subject when people ask about you.",
+  "You're so full of yourself, you probably think this roast is about someone else.",
+  "Your personality is like a wet paper towel—useless and always falling apart.",
+  "You're the type of person who would fail a personality test.",
+  "If common sense were a currency, you'd be bankrupt.",
+  "You're like a software update—every time I see you, I think 'not now'.",
+  "You're the reason they invented the 'block' button.",
+  "I'd call you a clown, but that would be an insult to clowns.",
+  "You're so ugly, you could be a modern art masterpiece.",
+  "Your face is proof that God has a sense of humor.",
+  "You're not ugly, but you're not pretty either. You're just... there.",
+  "You're the human version of a '404 Not Found'.",
+  "You're like a broken pencil—pointless.",
+  "Your brain is like a browser with 100 tabs open and no Wi-Fi.",
+  "You're so unoriginal, your favorite comeback is 'I know you are, but what am I?'",
+  "You're the kind of person who would lose a game of hide and seek to a mirror.",
+  "You're the reason warning labels exist.",
+  "You're like a slinky—not really good for anything, but you still bring a smile to my face when I push you down the stairs.",
+  "You're not the worst person in the world, but you're definitely in the top 5.",
+  "You're the reason they put 'do not eat' on silica gel packets.",
+  "I've met rocks with more personality than you.",
+  "You're like a Wi-Fi signal—always weak when you need it most.",
+  "You're the human embodiment of a typo.",
+  "You're so indecisive, you probably have a favorite brand of water.",
+  "You're the type of person who would laugh at your own jokes before you finish them.",
+  "I would agree with you, but I don't want to ruin my reputation.",
+  "Your life is like a broken record—same boring tune over and over.",
+  "You're the reason people hate Mondays.",
+  "I'm not saying you're ugly, but you could make a freight train take a dirt road.",
+  "You're so dumb, you could throw a rock at the ground and miss.",
+  "You're the kind of person who would look for a 'skip' button in real life.",
+  "You're like a cloud—when you're gone, the sun comes out.",
+  "You're the human version of a paper cut—annoying and unnecessary.",
+  "You're proof that not everyone needs a license to breed.",
+  "I've seen better-looking faces on a wanted poster.",
+  "You're the type of person who would lose a battle of wits with a blank piece of paper.",
+  "Your brain has a '404 Error' written all over it.",
+  "You're like a cheap phone charger—always failing when I need you.",
+  "You're the reason we can't have nice things.",
+  "I'd call you a tool, but you're not sharp enough.",
+  "You're the human equivalent of a mosquito—annoying and hard to get rid of.",
+  "You're so boring, even your shadow leaves you.",
+  "You're the type of person who thinks 'Ctrl + Z' works in real life.",
+  "You're like a wet sock—damp, uncomfortable, and nobody wants to touch you.",
+  "You're the reason they created the 'mute' button.",
+  "You're so useless, you couldn't pour water out of a boot with instructions on the heel.",
+  "I've met spiders with better social skills than you.",
+  "You're the human version of a 'loading...' screen—forever stuck.",
+  "You're like a broken clock—right twice a day, but wrong the rest of the time.",
+  "You're the type of person who would Google 'how to breathe'.",
+  "You're so slow, you could get outrun by a snail on crutches.",
+  "You're the reason they put 'do not try this at home' on every commercial.",
+  "You're not a complete idiot, some parts are missing.",
+  "You're like a bad Wi-Fi connection—always dropping when things get important.",
+  "You're the human equivalent of a 'Terms and Conditions' page—long, boring, and nobody reads you.",
+  "You're so uninteresting, you could make a documentary about paint drying seem thrilling.",
+  "You're the type of person who would lose a fight with a paper bag.",
+  "I've seen more personality in a cardboard box.",
+  "You're like a broken elevator—always going down.",
+  "You're the reason they put 'caution: hot' on coffee cups.",
+  "You're so ugly, your reflection probably runs away.",
+  "You're the human version of a 'system error'.",
+  "You're the type of person who thinks a shortcut is an app on your phone.",
+  "You're so annoying, you could make a monk break his vow of silence.",
+  "You're like a broken compass—always pointing in the wrong direction.",
+  "You're the reason they put 'fragile' stickers on packages—so you know to handle yourself with care.",
+  "You're so boring, your own shadow falls asleep.",
+  "You're the type of person who would look for a 'Ctrl + Alt + Delete' for your life.",
+  "I've met goldfish with better memory than you.",
+  "You're like a bad hair day—every day.",
+  "You're the human equivalent of a traffic jam—everyone wants to get away from you.",
+  "You're so stupid, you could trip over a cordless phone.",
+  "You're the reason they put 'keep out of reach of children' on everything.",
+  "I'd explain it to you, but I don't have the patience to translate 'idiot'.",
+  "You're like a broken record—same boring story, over and over.",
+  "You're the type of person who would bring a knife to a gunfight and complain about unfairness.",
+  "You're so weak, you could get beaten by a stiff breeze.",
+  "You're the human version of a '404 Error'—not found.",
+  "I've seen rocks with more charisma than you.",
+  "You're like a bad smell—you just won't go away.",
+  "You're the reason they invented the 'unfollow' button.",
+  "You're so pathetic, you could make a sad song seem happy.",
+  "You're the type of person who would lose a game of solitaire.",
+  "You're like a bad haircut—you just have to wait for it to grow out.",
+  "You're the human equivalent of a broken promise—disappointing and forgettable.",
+  "I've seen more effort put into a nap than you put into your entire life.",
+  "You're the reason they put 'do not enter' on dangerous zones.",
+  "You're so clumsy, you could trip over your own shadow.",
+  "You're like a bad dream—I just want to wake up.",
+  "You're the type of person who would try to drink soup with a fork.",
+  "You're so boring, you make watching paint dry seem like an extreme sport.",
+  "You're the human version of a 'low battery' warning—always running out of steam.",
+  "I've seen better teamwork from a group of toddlers.",
+  "You're like a bad app—always crashing when you're needed.",
+  "You're the reason they put 'keep away from fire' on flammable things.",
+  "You're so unremarkable, you could be a background character in your own life.",
+  "You're the type of person who would search for 'how to boil water'.",
+  "You're like a broken pen—can't write, can't draw, can't do anything.",
+  "You're the human equivalent of a 'full inbox'—cluttered and unmanageable.",
+  "I've met doors with more personality than you.",
+  "You're the reason they put 'no running' signs in swimming pools.",
+  "You're so dull, you could make a rainbow look gray.",
+  "You're like a bad photo—blurry, out of focus, and best forgotten.",
+  "You're the type of person who would lose an argument with a mirror.",
+  "You're so useless, you could be a chocolate teapot.",
+  "You're the human version of a 'silent mode'—irrelevant and easily ignored.",
+  "I've seen more excitement in a sleeping cat.",
+  "You're like a bad movie—long, boring, and you can't wait for it to end.",
+  "You're the reason they put 'warning' labels on everything.",
+  "You're so out of touch, you probably think TikTok is a clock.",
+  "You're the type of person who would try to make a sandwich with a banana.",
+  "You're like a bad song—annoying and stuck in everyone's head.",
+  "You're the human equivalent of a 'low memory' error—always out of space.",
+  "I've seen more life in a abandoned building.",
+  "You're the reason they put 'handle with care' on fragile items.",
+  "You're so boring, you could make a rollercoaster seem like a boring car ride.",
+  "You're like a bad joke—nobody laughs except you.",
+  "You're the type of person who would try to fry ice.",
+  "You're so clueless, you could be a character in a movie who dies first.",
+  "You're the human version of a 'reboot required' message—you need a full restart.",
+  "I've met pencils that were sharper than you.",
+  "You're the reason they put 'no swimming' signs in shark tanks.",
+  "You're so slow, you could be beaten by a turtle in a marathon.",
+  "You're like a bad outfit—you just don't fit in.",
+  "You're the type of person who would try to mail a email.",
+  "You're so forgettable, you could be a one-time password.",
+  "You're the human equivalent of a 'loading...' bar that never finishes.",
+  "I've seen more entertainment in a blank wall.",
+  "You're the reason they put 'no entry' signs on private property.",
+  "You're so loud, you could wake up a sleeping bear.",
+  "You're like a bad haircut—everyone notices, but nobody says anything.",
+  "You're the type of person who would try to eat soup with a straw.",
+  "You're so unoriginal, you probably copy your homework from the internet.",
+  "You're the human version of a 'page not found'—lost and useless.",
+  "I've seen more intelligence in a potato.",
+  "You're the reason they put 'do not feed the animals' signs at the zoo.",
+  "You're so boring, you could make a party seem like a funeral.",
+  "You're like a bad driver—always in the wrong lane.",
+  "You're the type of person who would try to blow out a lightbulb.",
+  "You're so selfish, you probably think the world revolves around you.",
+  "You're the human equivalent of a 'silent' alarm—never does what it's supposed to.",
+  "I've seen better decisions made by a coin flip.",
+  "You're the reason they put 'keep off the grass' signs in parks.",
+  "You're so clumsy, you could trip over a painted line.",
+  "You're like a bad reputation—hard to lose and always following you.",
+  "You're the type of person who would try to drink a solid block.",
+  "You're so pointless, you could be a screen door on a submarine.",
+  "You're the human version of a 'glitch'—unexpected and unwanted.",
+  "I've seen more potential in a cracked egg.",
+  "You're the reason they put 'no smoking' signs in gas stations.",
+  "You're so awkward, you could make a robot seem natural.",
+  "You're like a bad habit—hard to break and bad for everyone.",
+  "You're the type of person who would try to walk through a closed door.",
+  "You're so forgettable, you could be a forgotten password.",
+  "You're the human equivalent of a 'full recycle bin'—trash that needs to be emptied.",
+  "I've seen more excitement in a library.",
+  "You're the reason they put 'do not touch' signs on fragile items.",
+  "You're so lazy, you could make a sloth seem energetic.",
+  "You're like a bad shadow—always there but never wanted.",
+  "You're the type of person who would try to catch a bullet with their teeth.",
+  "You're so out of shape, you could be mistaken for a blobfish.",
+  "You're the human version of a 'blank screen'—nothing there.",
+  "I've seen more effort in a single yawn than in your entire existence.",
+  "You're the reason they put 'warning: sharp edges' on knives.",
+  "You're so boring, you could make a video game seem like watching paint dry.",
+  "You're like a bad memory—painful and hard to forget.",
+  "You're the type of person who would try to light a fire with a wet match.",
+  "You're so clueless, you could be a character in a comedy who doesn't get the joke.",
+  "You're the human equivalent of a 'low battery' warning that never gets fixed.",
+  "I've seen more sense in a confused squirrel.",
+  "You're the reason they put 'no diving' signs in shallow water.",
+  "You're so messy, you could make a tornado seem organized.",
+  "You're like a bad neighbor—always there, always annoying.",
+  "You're the type of person who would try to eat a rock thinking it's candy.",
+  "You're so uninteresting, you could be a documentary about watching paint dry.",
+  "You're the human version of a 'spam email'—unwanted and annoying.",
+  "I've seen more talent in a person who has no arms and plays the piano with their feet.",
+  "You're the reason they put 'do not swim' signs in a pool of acid.",
+  "You're so loud, you could be heard over a jet engine.",
+  "You're like a bad virus—hard to get rid of and ruins everything.",
+  "You're the type of person who would try to surf on a sidewalk.",
+  "You're so forgettable, you could be a song that nobody remembers.",
+  "You're the human equivalent of a '404 Error'—just not there.",
+  "I've seen more potential in a used napkin.",
+  "You're the reason they put 'do not enter' on a lion's cage.",
+  "You're so slow, you could be beaten by a glacier.",
+  "You're like a bad smell—lingering and unwanted.",
+  "You're the type of person who would try to fly with a paper umbrella.",
+  "You're so awkward, you could make a penguin look graceful.",
+  "You're the human version of a 'syntax error'—nothing works right around you.",
+  "I've seen more determination in a leaf blowing in the wind.",
+  "You're the reason they put 'do not feed' signs on wild animals.",
+  "You're so boring, you could make a movie about watching grass grow seem exciting.",
+  "You're like a bad dream that never ends.",
+  "You're the type of person who would try to swim in a desert.",
+  "You're so clueless, you could be a character in a horror movie who goes into the basement alone.",
+  "You're the human equivalent of a 'dead pixel'—small but incredibly annoying.",
+  "I've seen more life in a rock.",
+  "You're the reason they put 'caution: wet floor' signs on dry floors.",
+  "You're so clumsy, you could trip over a piece of dust.",
+  "You're like a bad joke—nobody wants to hear it, but you tell it anyway.",
+  "You're the type of person who would try to build a house with paper.",
+  "You're so forgettable, you could be a forgotten dream.",
+  "You're the human version of a 'offline' sign—disconnected and useless.",
+  "I've seen more spark in a dead battery.",
+  "You're the reason they put 'do not touch' on a hot stove.",
+  "You're so slow, you could get beaten by a statue.",
+  "You're like a bad smell—you just can't get rid of it.",
+  "You're the type of person who would try to dry themselves with water.",
+  "You're so awkward, you could make a robot seem human.",
+  "You're the human equivalent of a 'no signal' screen—empty and frustrating.",
+  "I've seen more sense in a piece of cardboard.",
+  "You're the reason they put 'warning' on every little thing.",
+  "You're so boring, you could put a hyperactive child to sleep.",
+  "You're like a bad ending to a good movie—disappointing.",
+  "You're the type of person who would try to eat a soup with a fork and complain it's broken.",
+  "You're so forgettable, you could be a meme that died in 2012.",
+  "You're the human version of a 'broken link'—you don't go anywhere.",
+  "I've seen more potential in a blank sheet of paper.",
+  "You're the reason they put 'do not look directly at the sun'—wait, that's you.",
+  "You're so unremarkable, you could be a background noise.",
+  "You're like a bad movie—you just want it to end.",
+
+]
+
+export function seedRoasts() {
+  db.prepare('DELETE FROM beef_roasts').run()
+
+  const insertRoast = db.prepare(
+    'INSERT INTO beef_roasts (text, category) VALUES (?, ?)'
+  )
+  const insertAll = db.transaction((rows) => {
+    for (const { text, category } of rows) {
+      insertRoast.run(text, category)
+    }
+    return rows.length
+  })
+
+  return insertAll(
+    starterRoasts.filter((text) => text !== '__PLH__').map((text) => ({
+      text,
+      category: 'beef'
+    }))
+  )
+}
+
+export function getRandomRoast() {
+  return (
+    db.prepare(`
+      SELECT id, text, category
+      FROM beef_roasts
+      ORDER BY RANDOM()
+      LIMIT 1
+    `).get() || null
+  )
+}
+
+seedRoasts()
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
@@ -1555,6 +1834,44 @@ export function listMenuAssets(tenantId) {
   `).all(tenantId)
 }
 
+export function deleteMenuAsset(tenantId, id) {
+  const row = db.prepare(`SELECT url FROM menu_assets WHERE tenant_id=? AND id=?`).get(tenantId, id)
+
+  if (row && row.url) {
+    const match = row.url.match(/\/api\/menu-assets\/file\/(menu_[a-f0-9-]+\.(jpg|jpeg|png|webp|gif))$/i)
+    if (match) {
+      try {
+        fs.unlinkSync(path.join(menuAssetDir, match[1]))
+      } catch {
+        /* file already gone; ignore */
+      }
+    }
+  }
+
+  db.prepare(`DELETE FROM menu_assets WHERE tenant_id=? AND id=?`).run(tenantId, id)
+  return row ? row.id : null
+}
+
+export function clearMenuAssets(tenantId) {
+  const rows = db.prepare(`SELECT * FROM menu_assets WHERE tenant_id=?`).all(tenantId)
+
+  for (const row of rows) {
+    if (row.url) {
+      const match = String(row.url).match(/\/api\/menu-assets\/file\/(menu_[a-f0-9-]+\.(jpg|jpeg|png|webp|gif))$/i)
+      if (match) {
+        try {
+          fs.unlinkSync(path.join(menuAssetDir, match[1]))
+        } catch {
+          /* file already gone; ignore */
+        }
+      }
+    }
+  }
+
+  db.prepare(`DELETE FROM menu_assets WHERE tenant_id=?`).run(tenantId)
+  return rows.length
+}
+
 export function randomMenuAsset(tenantId) {
   const row = db.prepare(`
     SELECT * FROM menu_assets
@@ -2220,7 +2537,7 @@ export function addWarContribution(tenantId, {
   damage
 }) {
   const existing = db.prepare(`
-    SELECT * FROM vice_war_participants
+    SELECT * 
     WHERE tenant_id=? AND war_id=? AND jid=?
   `).get(tenantId, warId, jid)
 
@@ -2228,7 +2545,7 @@ export function addWarContribution(tenantId, {
 
   if (existing) {
     db.prepare(`
-      UPDATE vice_war_participants
+      UPDATE 
       SET damage=damage+?, attacks=attacks+1, updated_at=?
       WHERE tenant_id=? AND war_id=? AND jid=?
     `).run(damage, timestamp, tenantId, warId, jid)

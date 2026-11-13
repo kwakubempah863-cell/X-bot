@@ -4,7 +4,7 @@ import { TenantsPage } from '@/components/tenants-page'
 export const Route = createFileRoute('/app/tenants/')({
   head: () => ({
     meta: [
-      { title: 'Tenants · X Control Center' },
+      { title: 'Tenants · Velvet Devil' },
       { name: 'description', content: 'Manage paired X bots.' }
     ]
   }),

@@ -119,8 +119,7 @@ const welcomeCopy = {
     '📸 Your picture',
     '👤 Your name',
     '📍 Location (optional, City/Country)',
-    '',
-    'Welcome to the domain.'
+    `Welcome to the velvet room, ${user}. 🥀 Leave your ego at the door, or I'll tear it apart.`
   ].join('\n'),
 
   battle: ({ groupName, user }) => [
@@ -141,8 +140,7 @@ const welcomeCopy = {
     '📸 Show us your face',
     '👤 Tell us your name',
     '📍 Tell us your city/country (optional)',
-    '',
-    'Welcome, challenger. 😈'
+    `Welcome to the velvet room, ${user}. 🥀 Leave your ego at the door, or I'll tear it apart.`
   ].join('\n'),
 
   royal: ({ groupName, user }) => [
@@ -158,7 +156,7 @@ const welcomeCopy = {
     '👤 Name',
     '📍 Location (optional, City/Country)',
     '',
-    'Take your place among us.'
+    `Welcome to the velvet room, ${user}. 🥀 Leave your ego at the door, or I'll tear it apart.`
   ].join('\n'),
 
   chaotic: ({ groupName, user }) => [
@@ -204,7 +202,7 @@ const welcomeCopy = {
     '👤 NAME',
     '📍 LOCATION — CITY/COUNTRY (OPTIONAL)',
     '',
-    'Welcome to the domain.',
+    `Welcome to the velvet room, ${user}. 🥀 Leave your ego at the door, or I'll tear it apart.`,
     '',
     '━━━━━━━━━━━━━━━━━━━━━━',
     '⚡ X  |  👑 BempsX',

@@ -4,7 +4,7 @@ import { TenantDetail } from '@/components/tenant-detail'
 export const Route = createFileRoute('/app/tenants/$tenantId')({
   head: () => ({
     meta: [
-      { title: 'Tenant detail · X Control Center' },
+      { title: 'Tenant detail · Velvet Devil' },
       { name: 'description', content: 'Live tenant telemetry.' }
     ]
   }),

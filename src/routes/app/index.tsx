@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import type { BotCommandsRow } from "@/lib/db-types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -37,8 +36,8 @@ import { AccountPage } from "@/components/account-page";
 export const Route = createFileRoute("/app/")({
   head: () => ({
     meta: [
-      { title: "X Control Center · BempsX" },
-      { name: "description", content: "Live operator control center for X." },
+      { title: "Velvet Devil · BempsX" },
+      { name: "description", content: "Live operator control centre for Velvet Devil." },
     ],
   }),
   component: ControlCenter,
@@ -47,6 +46,11 @@ export const Route = createFileRoute("/app/")({
 const runtimeBase = import.meta.env.VITE_RUNTIME_API_URL || "";
 
 type Role = "super_admin" | "tenant_owner";
+type RuntimeCommand = {
+  name: string;
+  category?: string;
+  description?: string;
+};
 
 type RuntimeGroup = {
   id: string;
@@ -185,7 +189,7 @@ function LoginScreen({
               className="h-full w-full object-cover"
             />
           </div>
-          <CardTitle className="font-serif text-3xl">X Control Center</CardTitle>
+          <CardTitle className="font-serif text-3xl">Velvet Devil Control Centre</CardTitle>
           <p className="text-sm text-muted-foreground">
             Local access for the live X WhatsApp runtime.
           </p>
@@ -214,7 +218,7 @@ function LoginScreen({
             </Button>
           </form>
           <p className="mt-3 text-center text-xs text-muted-foreground">
-            X · Created by BempsX
+            Velvet Devil · Created by BempsX
           </p>
         </CardContent>
       </Card>
@@ -231,7 +235,8 @@ function ControlCenter() {
   const [role, setRole] = useState<Role>("super_admin");
   const [userTenantId, setUserTenantId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [commands, setCommands] = useState<BotCommandsRow[]>([]);
+  const [commands, setCommands] = useState<RuntimeCommand[]>([]);
+  const [commandsBusy, setCommandsBusy] = useState(false);
   const [images, setImages] = useState<MenuAsset[]>([]);
   const [cmdAssets, setCmdAssets] = useState<CommandAsset[]>([]);
   const [liveGroups, setLiveGroups] = useState<RuntimeGroup[]>([]);
@@ -249,7 +254,7 @@ function ControlCenter() {
   const load = async () => {
     const [me, cmds, assets, cmdImgs, groups, status] = await Promise.all([
       apiFetch("/api/auth/me"),
-      apiFetch("/api/commands"),
+      apiFetch("/api/commands", { cache: "no-store" }),
       apiFetch("/api/menu-assets"),
       apiFetch("/api/command-assets"),
       apiFetch("/api/groups"),
@@ -326,6 +331,22 @@ function ControlCenter() {
       toast.error("Could not start runtime", { description: errText(e) });
     } finally {
       setRuntimeBusy(false);
+    }
+  };
+
+  const reloadCommands = async () => {
+    setCommandsBusy(true);
+    try {
+      const latest = await apiFetch("/api/commands", { cache: "no-store" });
+      if (!Array.isArray(latest)) {
+        throw new Error("The runtime returned an invalid command list");
+      }
+      setCommands(latest);
+      toast.success(`Loaded ${latest.length} runtime commands`);
+    } catch (e) {
+      toast.error("Command reload failed", { description: errText(e) });
+    } finally {
+      setCommandsBusy(false);
     }
   };
 
@@ -417,7 +438,7 @@ function ControlCenter() {
     setRole(me.user?.role || "super_admin");
     setUserTenantId(me.user?.tenantId || null);
     setTab("overview");
-    toast.success("Signed in to X Control Center");
+    toast.success("Signed in to Velvet Devil");
   };
 
   const logout = async () => {
@@ -472,7 +493,7 @@ function ControlCenter() {
               <p className="font-serif text-xl leading-none">
                 X{" "}
                 <span className="font-sans text-xs font-medium uppercase tracking-[0.2em] text-primary">
-                  control center
+                  velvet devil control centre
                 </span>
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
@@ -554,7 +575,11 @@ function ControlCenter() {
 
           {/* ADMIN-ONLY TABS */}
           {tab === "commands" && isSuperAdmin && (
-            <Commands commands={commands} />
+            <Commands
+              commands={commands}
+              onReload={reloadCommands}
+              reloading={commandsBusy}
+            />
           )}
           {tab === "games" && isSuperAdmin && <Games groups={liveGroups} />}
           {tab === "ai" && isSuperAdmin && <AI groups={liveGroups} />}
@@ -591,7 +616,7 @@ function ControlCenter() {
 function Overview(p: {
   status: RuntimeStatus;
   groups: RuntimeGroup[];
-  commands: BotCommandsRow[];
+  commands: RuntimeCommand[];
   images: MenuAsset[];
   activeImage: string;
   connect: () => void;
@@ -1006,7 +1031,7 @@ function GroupDetail({
               onChange={(e) =>
                 setSettings((s) => ({ ...s, welcomeTemplate: e.target.value }))
               }
-              placeholder="Welcome {user} to {group}!"
+              placeholder="Welcome to the velvet room, {user}. 🥀 Leave your ego at the door, or I'll tear it apart."
             />
             <Input
               value={settings.goodbyeTemplate}
@@ -1057,62 +1082,88 @@ function Toggle({
   );
 }
 
-function Commands({ commands }: { commands: BotCommandsRow[] }) {
-  const catalog = [
-    ["Core", ".menu .help .ping .status .owner"],
-    ["Group", ".groupinfo .members .admins .rules .stats .setrules"],
-    [
-      "Moderation",
-      ".antilink .antispam .warn .warnings .clearwarn .kick .promote .demote",
-    ],
-    ["Economy", ".balance .daily .work .pay"],
-    ["Games", ".games .coinflip .dice .rps .tictactoe .quiz .wordle .hangman"],
-    ["AI", ".ai <question>"],
-  ];
+function Commands({
+  commands,
+  onReload,
+  reloading,
+}: {
+  commands: RuntimeCommand[];
+  onReload: () => Promise<void>;
+  reloading: boolean;
+}) {
+  const groupedCommands = useMemo(() => {
+    const groups = new Map<string, RuntimeCommand[]>();
+    for (const command of commands) {
+      const category = String(command.category || "other")
+        .trim()
+        .toLowerCase();
+      const entries = groups.get(category);
+      if (entries) {
+        entries.push(command);
+      } else {
+        groups.set(category, [command]);
+      }
+    }
+    return [...groups.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([category, entries]) => [
+        category,
+        entries.sort((a, b) => a.name.localeCompare(b.name)),
+      ] as const);
+  }, [commands]);
+
   return (
     <section className="space-y-5">
-      <div>
-        <p className="font-mono text-xs uppercase tracking-[0.2em] text-primary">
-          live registry
-        </p>
-        <h1 className="mt-2 font-serif text-4xl">Commands with guardrails.</h1>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="font-mono text-xs uppercase tracking-[0.2em] text-primary">
+            live registry
+          </p>
+          <h1 className="mt-2 font-serif text-4xl">Commands with guardrails.</h1>
+        </div>
+        <Button
+          variant="outline"
+          onClick={() => void onReload()}
+          disabled={reloading}
+        >
+          <RefreshCw className={reloading ? "size-4 animate-spin" : "size-4"} />
+          {reloading ? "Reloading..." : "Reload Commands"}
+        </Button>
       </div>
-      <div className="grid gap-4 md:grid-cols-2">
-        {catalog.map(([c, list]) => (
-          <Card key={c}>
-            <CardContent className="p-5">
-              <p className="font-medium">{c}</p>
-              <p className="mt-3 font-mono text-xs leading-6 text-muted-foreground">
-                {list}
-              </p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-      <Card>
-        <CardHeader>
-          <CardTitle>Runtime registered handlers</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {commands.map((c) => (
-            <div
-              key={c.name}
-              className="rounded-xl border border-border/70 p-3"
-            >
-              <p className="font-mono text-sm text-primary">.{c.name}</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {c.description}
-              </p>
-            </div>
+      {groupedCommands.length ? (
+        <div className="grid gap-4 md:grid-cols-2">
+          {groupedCommands.map(([category, entries]) => (
+            <Card key={category}>
+              <CardHeader>
+                <CardTitle className="capitalize">
+                  {category.replace(/[_-]+/g, " ")}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-2 sm:grid-cols-2">
+                {entries.map((command) => (
+                  <div
+                    key={command.name}
+                    className="rounded-xl border border-border/70 p-3"
+                  >
+                    <p className="font-mono text-sm text-primary">
+                      .{command.name}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {command.description || "No description provided."}
+                    </p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
           ))}
-          {!commands.length && (
-            <p className="text-sm text-muted-foreground">
-              No command overrides are configured; the runtime registry remains
-              authoritative.
-            </p>
-          )}
-        </CardContent>
-      </Card>
+        </div>
+      ) : (
+        <Card>
+          <CardContent className="p-5 text-sm text-muted-foreground">
+            No commands are currently registered in the runtime.
+          </CardContent>
+        </Card>
+      )}
     </section>
   );
 }
@@ -1374,20 +1425,91 @@ function MenuImages(p: {
           </div>
         </CardContent>
       </Card>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          {p.images.length} menu image{p.images.length === 1 ? "" : "s"}
+        </p>
+        <Button
+          type="button"
+          variant="destructive"
+          onClick={async () => {
+            if (
+              !window.confirm("Delete all menu images? This cannot be undone.")
+            ) {
+              return;
+            }
+            console.log("Deleting all menu images");
+            try {
+              const response = await fetch(`${runtimeBase}/api/menu-assets`, {
+                method: "DELETE",
+                credentials: "include",
+              });
+              if (response.ok) {
+                window.location.reload();
+              } else {
+                console.error("Menu image deletion failed", response.status);
+                window.alert("Failed to delete menu images.");
+              }
+            } catch (error) {
+              console.error(error);
+              window.alert("Failed to delete menu images.");
+            }
+          }}
+          disabled={!p.images.length}
+        >
+          <Trash2 />
+          Delete All
+        </Button>
+      </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {p.images.map((i) => (
-          <Card key={i.id} className="overflow-hidden">
+        {p.images.map((img) => (
+          <Card key={img.id} className="overflow-hidden">
             <img
-              src={i.url}
-              alt={i.category}
+              src={img.url}
+              alt={img.category}
               className="aspect-video w-full object-cover"
             />
             <CardContent className="p-4">
-              <p className="font-medium">{i.category}</p>
+              <p className="font-medium">{img.category}</p>
               <p className="text-xs text-muted-foreground">
-                Used {i.usageCount ?? i.usage_count ?? 0} times ·{" "}
-                {i.active ? "Active" : "Off"}
+                Used {img.usageCount ?? img.usage_count ?? 0} times ·{" "}
+                {img.active ? "Active" : "Off"}
               </p>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!window.confirm("Delete this image?")) return;
+                    console.log("Deleting:", img.id);
+                    try {
+                      const response = await fetch(
+                        `${runtimeBase}/api/menu-assets/${encodeURIComponent(img.id)}`,
+                        {
+                          method: "DELETE",
+                          credentials: "include",
+                        },
+                      );
+                      if (response.ok) {
+                        window.location.reload();
+                      } else {
+                        console.error(
+                          "Menu image deletion failed",
+                          response.status,
+                        );
+                        window.alert("Failed to delete image.");
+                      }
+                    } catch (error) {
+                      console.error(error);
+                      window.alert("Failed to delete image.");
+                    }
+                  }}
+                  className="rounded-lg p-1 text-xs text-red-500 hover:bg-red-100 hover:text-red-800"
+                  aria-label={`Delete ${img.category} menu image`}
+                  title="Delete menu image"
+                >
+                  <Trash2 className="size-4" />
+                </button>
+              </div>
             </CardContent>
           </Card>
         ))}
@@ -1429,7 +1551,7 @@ function CommandImages({
   refresh,
 }: {
   assets: CommandAsset[];
-  commands: BotCommandsRow[];
+  commands: RuntimeCommand[];
   refresh: () => Promise<void>;
 }) {
   const [command, setCommand] = useState("");

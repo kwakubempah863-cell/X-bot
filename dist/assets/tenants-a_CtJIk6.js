@@ -1,0 +1,1 @@
+import{j as t,O as s}from"./index-Cif4nXak.js";function o(){return t.jsxDEV(s,{},void 0,!1,{fileName:"C:/Users/cw_23/Desktop/First/X-Bot/src/routes/app/tenants.tsx?tsr-split=component",lineNumber:3,columnNumber:10},this)}export{o as component};

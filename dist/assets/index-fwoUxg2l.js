@@ -1,0 +1,1 @@
+import{T as o}from"./tenants-page-CFGztZZM.js";import"./index-Cif4nXak.js";import"./button-TIFmvCuY.js";import"./refresh-cw-qLt8ekx8.js";import"./createLucideIcon-BB38k2ql.js";import"./users-nRzsaC2h.js";import"./log-out-BwCBe0YE.js";const a=o;export{a as component};

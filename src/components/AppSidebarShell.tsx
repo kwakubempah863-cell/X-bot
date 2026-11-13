@@ -40,7 +40,7 @@ interface NavItemDef {
 // 404. Only the shipped dashboard route is listed; add yours as you create them,
 // e.g. `src/routes/app/items.tsx` → { href: '/app/items', label: 'Items' }.
 const NAV_ITEMS: NavItemDef[] = [
-  { href: '/app', icon: <LayoutDashboard className="h-4 w-4" />, label: 'Control center', active: true },
+  { href: '/app', icon: <LayoutDashboard className="h-4 w-4" />, label: 'Velvet Devil Control Centre', active: true },
 ]
 
 function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) {

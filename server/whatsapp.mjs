@@ -522,7 +522,7 @@ export class WhatsAppRuntime {
                         ownJid,
                         {
                           text: [
-                            '🔐 *X CONTROL CENTER*',
+                            '🔐 *VELVET DEVIL*',
                             '',
                             'Your login for the dashboard:',
                             '',

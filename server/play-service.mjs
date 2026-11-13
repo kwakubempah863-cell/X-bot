@@ -13,6 +13,9 @@ const MAX_MB =
 const MAX_DURATION =
   Number(process.env.X_PLAY_MAX_DURATION_SECONDS || 600);
 
+const MAX_VIDEO_MB =
+  Number(process.env.X_PLAY_MAX_VIDEO_MB || 100);
+
 const TIMEOUT_MS =
   Number(process.env.X_PLAY_TIMEOUT_MS || 30000);
 
@@ -38,6 +41,180 @@ const limit = pLimit(Math.max(1, CONCURRENCY));
  * ----------------------------------------------------- */
 async function ensureTmpDir() {
   await fsp.mkdir(TMP_ROOT, { recursive: true });
+}
+
+/* ── Play Mode queue system ──────────────────────────────── */
+const playQueue = [];
+let playing = false;
+const stopped = false;
+const queueLimit = pLimit(Math.max(1, CONCURRENCY));
+
+function playLog(...args) {
+  console.log('[X PLAY]', ...args);
+}
+
+/* ── Queue control ────────────────────────────────────────── */
+export async function playService(mode = 'normal') {
+  playLog('[PLAY] Service started (mode:', mode, ')');
+
+  await ensureTmpDir();
+
+  if (mode === 'play') {
+    playLog('[PLAY] Play Mode active — X will play your library of audio');
+    stopped = false;
+  }
+
+  return {
+    enqueue: async (audioEntry) => {
+      playQueue.push(audioEntry);
+      playLog('[QUEUE]', playQueue.length, 'tracks waiting');
+      if (!playing && !stopped) {
+        await processQueue();
+      }
+    },
+    stop: () => {
+      stopped = true;
+      playLog('🔴 Play mode stopped — clearing queue and cancelling current track');
+      if (playing) {
+        playing = false;
+        playQueue.length = 0;
+      }
+    },
+    start: async () => {
+      stopped = false;
+      playLog('[PLAY] Play mode reactivated. Queue:', playQueue.length, 'track(s) awaiting');
+      if (playQueue.length > 0) {
+        await processQueue();
+      }
+    },
+    get state() {
+      return { playing, stopped, queueLength: playQueue.length };
+    },
+  };
+}
+
+async function processQueue() {
+  if (stopped || playing) return;
+  if (playQueue.length === 0) return;
+
+  const entry = playQueue.shift();
+  playing = true;
+  playLog('[PLAY] ▶️ Now playing:', entry.title || 'unknown');
+
+  try {
+    await playEntry(entry);
+    playing = false;
+    if (!stopped && playQueue.length > 0) {
+      processQueue();
+    }
+  } catch (error) {
+    console.error('[X PLAY] Track failed:', error?.message || error);
+    if (!stopped) {
+      processQueue();
+    }
+  }
+}
+
+async function playEntry(entry) {
+  const { url, isMp3, duration, title, thumbnailBuffer } = entry;
+
+  if (isMp3) {
+    const filePath = path.join(TMP_ROOT, `play_${sanitize(title || 'audio')}.mp3`);
+    await fsp.writeFile(filePath, Buffer.from(entry.fileData || ''), 'binary');
+    await playMp3(filePath, null, duration);
+    return;
+  }
+
+  const video = await playSearch(url);
+  const meta = await getMetadata(video.url);
+  const thumbnail = meta?.thumbnail || video.thumbnail;
+
+  const jobId = `${Date.now()}_play_${sanitize(title || 'audio')}`;
+  const outputPath = path.join(TMP_ROOT, `${jobId}.mp3`);
+
+  const args = await buildBypassArgs([
+    '-f', 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+    '--merge-output-format', 'mp4',
+    '-o', outputPath,
+    '--', url
+  ]);
+
+  await runProcess(YTDLP_BIN, args, { timeoutMs: Math.max(TIMEOUT_MS, 300000) });
+
+  if (thumbnail) {
+    await downloadThumbnail(thumbnail, path.join(TMP_ROOT, `${jobId}_cover.jpg`));
+  }
+
+  const info = await fsp.stat(outputPath);
+  if (info.size === 0) throw new Error('EMPTY_OUTPUT');
+
+  await convertToMp3(
+    outputPath,
+    outputPath.replace(/\.mp4$/, '.mp3'),
+    duration,
+    thumbnail ? path.join(TMP_ROOT, `${jobId}_cover.jpg`) : null
+  );
+
+  const finalMp3 = path.join(TMP_ROOT, `${jobId}_play.mp3`);
+  await fsp.rename(outputPath.replace(/\.mp4$/, '.mp3'), finalMp3);
+
+  await playMp3(finalMp3, thumbnail, duration);
+}
+
+async function playMp3(mp3Path, thumbnailPath, durationSec) {
+  try {
+    await fsp.unlink(mp3Path).catch(() => {});
+  } catch {}
+
+  try {
+    await convertToMp3(
+      mp3Path,
+      mp3Path.replace(/\.mp3$/, '_temp.mp3'),
+      durationSec,
+      thumbnailPath
+    );
+  } catch (error) {
+    console.error('[X PLAY] FFmpeg conversion failed:', error?.message);
+    throw error;
+  }
+
+  return new Promise((resolve, reject) => {
+    const cmd = spawn('ffplay', [
+      '-autoexit',
+      '-nodisp',
+      '-loglevel', 'error',
+      '-i', mp3Path.replace(/\.mp3$/, '_temp.mp3'),
+    ], { windowsHide: true });
+
+    cmd.stdout.on('data', d => console.log('[PLAY]', d.toString().slice(0,200)));
+    cmd.stderr.on('data', d => console.error('[PLAY-ERR]', d.toString().slice(0,300)));
+
+    cmd.on('error', (err) => {
+      console.error('[X PLAY] ffplay error:', err.message);
+      reject(err);
+    });
+
+    cmd.on('close', (code) => {
+      if (code === 0) {
+        playLog('⏹️ Play finished');
+        resolve();
+      } else {
+        playLog(`⏹️ Play exited with code ${code}`);
+        reject(new Error(`Play exit code ${code}`));
+      }
+    });
+
+    process.on('SIGTERM', () => { cmd.kill('SIGTERM'); playLog('🔇 Play killed by SIGTERM'); });
+    process.on('SIGINT', () => { cmd.kill('SIGINT'); playLog('🔇 Play killed by SIGINT'); });
+  });
+}
+
+async function downloadThumbnail(url, outputPath) {
+  const res = await fetch(url);
+  const buf = await res.arrayBuffer();
+  const buffer = Buffer.from(buf);
+  const image = sharp(buffer);
+  await image.resize(320, 320, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toFile(outputPath);
 }
 
 /* -------------------------------------------------------
@@ -281,7 +458,10 @@ function convertToMp3(input, output, durationSec, thumbnailPath = null) {
       command
         .audioCodec('libmp3lame')
         .audioBitrate('128k')
-        .audioFrequency(44100);
+        .audioFrequency(44100)
+        /* Loudness normalisation — every track lands at a consistent,
+           WhatsApp-friendly loudness regardless of source volume. */
+        .audioFilters('loudnorm=I=-16:TP=-1.5:LRA=11');
     }
 
     command
@@ -321,6 +501,64 @@ async function verifyOutput(filePath) {
   const maxBytes = MAX_MB * 1024 * 1024;
   if (stat.size > maxBytes) throw new Error('FILE_TOO_LARGE');
   return stat;
+}
+
+/* -------------------------------------------------------
+ * Download video — highest quality MP4
+ * ----------------------------------------------------- */
+export async function downloadVideo(url) {
+  await ensureTmpDir();
+
+  if (!(await ytdlpAvailable())) throw new Error('YTDLP_MISSING');
+
+  let metadata;
+  try {
+    metadata = await getMetadata(url);
+  } catch (error) {
+    console.warn('[X VIDEO] metadata error:', error?.message);
+  }
+
+  const jobId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const outputPath = path.join(TMP_ROOT, `${jobId}_video.%(ext)s`);
+
+  const args = await buildBypassArgs([
+    '-f',
+    'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+    '--merge-output-format',
+    'mp4',
+    '-o',
+    outputPath,
+    '--',
+    url,
+  ]);
+
+  console.log('[X VIDEO] Executing:', YTDLP_BIN, args.join(' '));
+  await runProcess(YTDLP_BIN, args, {
+    timeoutMs: Math.max(TIMEOUT_MS, 300000),
+  });
+
+  const files = await fsp.readdir(TMP_ROOT);
+  const mp4File = files.find((f) => f.startsWith(jobId) && f.endsWith('.mp4'));
+  if (!mp4File) throw new Error('VIDEO_NOT_FOUND');
+
+  const finalPath = path.join(TMP_ROOT, mp4File);
+  const stat = await fsp.stat(finalPath);
+  if (!stat.isFile() || stat.size <= 0) throw new Error('EMPTY_OUTPUT');
+
+  const maxBytes = MAX_VIDEO_MB * 1024 * 1024;
+  if (stat.size > maxBytes) throw new Error('VIDEO_TOO_LARGE');
+
+  const buffer = await fsp.readFile(finalPath);
+  await fsp.unlink(finalPath).catch(() => {});
+
+  return {
+    buffer,
+    title: metadata?.title || 'Unknown',
+    duration: Number(metadata?.duration || 0),
+    fileName: `${safeName(metadata?.title || 'video')}.mp4`,
+    mimetype: 'video/mp4',
+    size: stat.size,
+  };
 }
 
 /* -------------------------------------------------------
@@ -474,6 +712,7 @@ export async function playResolve(query) {
 export const playConfig = {
   MAX_MB,
   MAX_DURATION,
+  MAX_VIDEO_MB,
   TIMEOUT_MS,
   CONCURRENCY,
   YTDLP_BIN,

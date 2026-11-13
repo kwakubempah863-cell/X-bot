@@ -5,8 +5,8 @@ import cheerio from 'cheerio-without-node-native'
 import yts from 'yt-search'
 import { getSong, searchSong } from 'genius-lyrics-api'
 import speedTest from 'speedtest-net'
+import { getSystemStats } from './utils/stats.mjs'
 
-import {
   searchMovie,
   buildResolutionMenu,
   findMovieSources,
@@ -17,63 +17,12 @@ import {
   justWatchOffers,
   buildJustWatchBlock,
   movieConfig
+
 } from './movies.mjs'
 
-import {
-  loadCharacter,
-  checkBlocked,
-  isHospitalized,
-  isJailed,
-  hospitalRemaining,
-  jailRemaining,
-  canChooseCareer,
-  canSwitchCareer,
-  setCareer,
-  clearHospital,
-  clearJail,
-  CAREER_REQUIREMENTS,
-  CAREER_SWITCH_COST,
-  CAREER_SWITCH_LEVEL,
-  factionOf,
-  grind,
-  rob,
-  smuggle,
-  resolveAttack,
-  canAttack,
-  setPvpSelf,
-  COMBAT_COOLDOWNS,
-  SHOP_ITEMS,
-  SLOT_NAMES,
-  listViceGear,
-  effectiveStats,
-  buyItem,
-  sellItem,
-  equipItem,
-  useConsumable,
-  createCrew,
-  joinCrew,
-  leaveCrew,
-  setCrewMemberRole,
-  crewDeposit,
-  crewWithdraw,
-  crewOverview,
-  crewLeaderboard,
-  addCrewReputation,
-  CREW_CREATE_COST,
-  CREW_MAX_MEMBERS,
-  declareWar,
-  warAttack,
-  warStatus,
-  resolveWar,
-  autoResolveExpiredWars,
-  WAR_DURATION_HOURS,
-  inviteCrewMember,
-  tickAura,
-  listMissions,
-  runMission
-} from './vice.mjs'
-
 import db, {
+
+  import db, {
   getMember,
   findMemberByIdentity,
   touchMember,
@@ -85,7 +34,6 @@ import db, {
   clearWarnings,
   addAudit,
   updateGroupSettings,
-  randomMenuAsset,
   transferCoins,
   bankDeposit,
   bankWithdraw,
@@ -97,6 +45,8 @@ import db, {
   getRival,
   listRivals,
   listVassals,
+  randomMenuAsset,
+  getRandomRoast,
   upsertRival,
   removeRival,
   queueAnonymous,
@@ -107,6 +57,11 @@ import db, {
   getAntideleteMode,
   isAntideleteEnabled
 } from './db.mjs'
+
+  register('stab', { category: 'actions', description: 'Stab a user', usage: '.stab @user' }, async (ctx) => sendActionGif('shoot', 'stab', ctx)),
+  register('slap', { category: 'actions', description: 'Slap a user', usage: '.slap @user' }, async (ctx) => sendActionGif('slap', 'slap', ctx)),
+  register('kick', { category: 'actions', description: 'Kick a user', usage: '.kick @user' }, async (ctx) => sendActionGif('kick', 'kick', ctx)),
+  register('bite', { category: 'actions', description: 'Bite a user', usage: '.bite @user' }, async (ctx) => sendActionGif('bite', 'bite', ctx)),
 
 import {
   awakenSequence,
@@ -153,19 +108,21 @@ import {
   buildGifChain
 } from './actions.mjs'
 
-import { playResolve, playConfig } from './play-service.mjs'
+import { playResolve, playConfig, downloadVideo } from './play-service.mjs'
+
+import { downloadMediaMessage, normalizeMessageContent } from '@whiskeysockets/baileys'
+
+import { getDevice } from '@whiskeysockets/baileys'
 
 import { createMention } from './templates.mjs'
 
-import {
-  identityFromMessage
-} from './rbac.mjs'
+import { identityFromMessage } from './rbac.mjs'
 
-import { getFavorite, getBeefs } from './memory.mjs'
+import { getFavorite } from './memory.mjs'
 
-/* =========================================================
+/* ───────────────────────
    X COMMAND REGISTRY
-   ========================================================= */
+   ─────────────────────── */
 
 const commands = new Map()
 
@@ -187,7 +144,7 @@ function memberMention(
   jid
 ) {
   return createMention(jid)
-}
+
 
 async function hasGroupAdminPermission({ runtime, group, sender, message }) {
   if (!group?.group_id) return false
@@ -199,6 +156,47 @@ async function hasGroupAdminPermission({ runtime, group, sender, message }) {
     runtime.isOwner(identity) ||
     await runtime.isGroupAdmin(group.group_id, sender)
   )
+}
+
+/* -------------------------------------------------------
+ * VIEW-ONCE DECRYPTION HELPERS
+ * ----------------------------------------------------- */
+/**
+ * Recursively unwraps a Baileys view-once envelope.
+ *
+ * WhatsApp stores view-once media in one of three wrapper shapes:
+ *   - message.viewOnceMessage
+ *   - message.viewOnceMessageV2
+ *   - message.viewOnceMessageV2Extension
+ *
+ * This function drills through any combination of those wrappers and
+ * returns the innermost message (typically a messageImage or messageVideo).
+ *
+ * @param {object} msg - The raw Baileys message object
+ * @returns {object|null} The inner media message, or null if none found
+ */
+export function unwrapViewOnce(msg) {
+  if (!msg) return null
+
+  let current = msg
+
+  for (const key of ['viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension']) {
+    if (current?.[key]) {
+      current = current[key]
+    } else {
+      return null
+    }
+  }
+
+  // If we wrapped through multiple levels, keep unwrapping until we hit
+  // the actual imageVideoMessage or video message.
+  while (current?.viewOnceMessage || current?.viewOnceMessageV2 || current?.viewOnceMessageV2Extension) {
+    if (current.viewOnceMessage) current = current.viewOnceMessage
+    else if (current.viewOnceMessageV2) current = current.viewOnceMessageV2
+    else if (current.viewOnceMessageV2Extension) current = current.viewOnceMessageV2Extension
+  }
+
+  return current
 }
 
 function participantJidKeys(value) {
@@ -228,10 +226,9 @@ function isGroupAdminParticipant(participant, jid) {
   return participantKeys.some(key => targetKeys.has(key))
 }
 
-
-/* =========================================================
+/* ───────────────────────
    X CYBER MENU SYSTEM
-   ========================================================= */
+   ─────────────────────── */
 
 function formatUptime(
   totalSeconds = Math.floor(process.uptime())
@@ -283,7 +280,6 @@ function formatUptime(
   return `${secs}s`
 }
 
-
 function menuCategoryLabel(category) {
   const labels = {
     core: 'CORE / SYSTEM',
@@ -315,7 +311,6 @@ function menuCategoryLabel(category) {
       .toUpperCase()
   )
 }
-
 
 const menuCommandOrder = {
   core: [
@@ -488,7 +483,6 @@ const menuCommandOrder = {
   other: []
 }
 
-
 function formatMenuUsage(
   command,
   prefix
@@ -513,14 +507,12 @@ function formatMenuUsage(
   return `${prefix}${cleaned}`
 }
 
-
 function formatMenuCommand(command, prefix) {
   const adminBadge = command.admin ? ' 🔐' : ''
   const ownerBadge = command.owner ? ' 👑' : ''
 
   return `┃ ${prefix}${command.name}${adminBadge}${ownerBadge}`
 }
-
 
 function sortMenuCommands(
   commandsInCategory,
@@ -578,7 +570,6 @@ function sortMenuCommands(
   )
 }
 
-
 function buildMenuCategory(category, categoryCommands, prefix) {
   const sorted = sortMenuCommands(categoryCommands, category)
 
@@ -597,237 +588,235 @@ function buildMenuCategory(category, categoryCommands, prefix) {
   return lines.join('\n')
 }
 
-
-function menuText() {
-  const prefix =
-    String(
-      process.env.X_DEFAULT_PREFIX ||
-      '.'
-    ).trim() || '.'
-
-  const creator =
-    String(
-      process.env.X_OWNER_USERNAME ||
-      process.env.X_ADMIN_USERNAME ||
-      'BempsX'
-    ).trim() || 'BempsX'
-
-  const registeredCommands =
-    [
-      ...commands.values()
-    ].filter(
-      command =>
-        command &&
-        command.name
-    )
-
-  const grouped =
-    new Map()
-
-  for (
-    const command
-    of registeredCommands
-  ) {
-    const category =
-      String(
-        command.category ||
-        'other'
-      )
-        .trim()
-        .toLowerCase() ||
-      'other'
-
-    if (
-      !grouped.has(category)
-    ) {
-      grouped.set(
-        category,
-        []
-      )
-    }
-
-    grouped
-      .get(category)
-      .push(command)
-  }
-
-  const categoryOrder = [
-    'core',
-    'group',
-    'moderation',
-    'profile',
-    'economy',
-    'games',
-    'anime',
-    'manga',
-    'media',
-    'actions',
-    'ai',
-    'utilities',
-    'owner',
-    'other'
+async function menuText() {
+  const stats = await getSystemStats()
+  const quotes = [
+    "I don't sleep. I feast.",
+    'Your commands are my laws.',
+    'Every signal leaves a scar.',
+    'In the velvet dark, I see everything.',
+    'The system bends; I do not.'
   ]
-
-  const orderedCategories = [
-    ...categoryOrder.filter(
-      category =>
-        grouped.has(category)
-    ),
-
-    ...[
-      ...grouped.keys()
-    ]
-      .filter(
-        category =>
-          !categoryOrder.includes(
-            category
-          )
-      )
-      .sort(
-        (a, b) =>
-          a.localeCompare(b)
-      )
-  ]
-
-  const sections = []
-
-  for (
-    const category
-    of orderedCategories
-  ) {
-    const categoryCommands =
-      grouped.get(category) ||
-      []
-
-    const section =
-      buildMenuCategory(
-        category,
-        categoryCommands,
-        prefix
-      )
-
-    if (section) {
-      sections.push(section)
-    }
-  }
-
-  const commandCount =
-    registeredCommands.length
-
-  const moduleCount =
-    orderedCategories.length
-
-  const uptime =
-    formatUptime()
-
-  const mode =
-    getBotMode()
+  const quote = quotes[Math.floor(Math.random() * quotes.length)]
 
   return [
-    ``,
-    `╔══════════════════════════════╗`,
-    `║  🩸  X   O V E R L O R  🩸  ║`,
-    `║   ⚔  D A R K   C O R E  ⚔   ║`,
-    `╚══════════════════════════════╝`,
-    `▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰`,
-    ``,
-    `╔══════════════════════════════╗`,
-    `║   ◈  S Y S T E M   U P L I N K   ◈   ║`,
-    `╚══════════════════════════════╝`,
-    `┃`,
-    `┃  ▸ STATUS     :  ${mode === 'public' ? '🟢 ONLINE' : '🔴 LOCKED'}`,
-    `┃  ▸ MODE       :  ${mode.toUpperCase()}`,
-    `┃  ▸ PREFIX     :  ${prefix}`,
-    `┃  ▸ COMMANDS   :  ${commandCount}`,
-    `┃  ▸ MODULES    :  ${moduleCount}`,
-    `┃  ▸ UPTIME     :  ${uptime}`,
-    `┃  ▸ OPERATOR   :  ${creator}`,
-    `┃  ▸ SIGNATURE  :  ⚡ OVERLORD vX`,
-    ``,
-    sections.join('\n'),
-    ``,
-    `╔══════════════════════════════╗`,
-    `║      ◈  X   A R S E N A L  ◈      ║`,
-    `╚══════════════════════════════╝`,
-    `┃`,
-    `┃  🩸 HEAVY`,
-    `┃  ⚔  RELENTLESS`,
-    `┃  🔥 GROUP-BOUND`,
-    `┃  ⚡ LOCKED-IN`,
-    `┃  ▰ ALWAYS HUNTING`,
-    `┃`,
-    `╰─〔 ${creator.toUpperCase()} × X OVERLORD 〕`,
-    ``
+    '╬════════════════════════════╬',
+    '   🥀 V E L V E T   D E V I L 🥀',
+    '╬════════════════════════════╬',
+    '',
+    `_${quote}_`,
+    '',
+    '╬ DEVIL\'S CONTRACT — BLOOD LEVELS ╬',
+    `│ ▸ CPU:    ${stats.cpuLoadPercent.toFixed(1)}%  🩸`,
+    `│ ▸ Memory: ${stats.ramUsedMb.toFixed(0)} MB / ${stats.ramTotalGb.toFixed(2)} GB  🩸`,
+    `│ ▸ Uptime: ${stats.botUptime}  🦇`,
+    `│ ▸ Ping:   ${stats.botPing}  🌹`,
+    '',
+    '» Type .cmds to view the Velvet Arsenal. «  🍷'
   ].join('\n')
 }
 
-
-/* =========================================================
+/* ───────────────────────
    CORE COMMANDS
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'menu',
   {
     category: 'core',
-    description: 'Show X cyber command menu'
+    description: 'Show the Velvet Devil control panel'
   },
-  async ({ runtime, group }) => {
-    if (!runtime.sock || !group) {
-      return menuText()
+  async ({ runtime, group, sender }) => {
+    let caption
+    try {
+      caption = await menuText()
+    } catch (error) {
+      console.error('[X MENU] System stats failed:', error)
+      return '❌ Unable to load system health right now.'
     }
 
-    const asset = randomMenuAsset(group.tenant_id)
+    const jid = group?.group_id || sender
+    if (!jid || !runtime?.safeSendMessage) {
+      return caption
+    }
+
+    let menuAsset
+    try {
+      menuAsset = randomMenuAsset(runtime.tenantId || 'default')
+    } catch (error) {
+      console.error('[X MENU] Menu asset lookup failed:', error)
+    }
+
+    if (!menuAsset?.url) {
+      await runtime.safeSendMessage(
+        jid,
+        { text: caption },
+        { label: 'menu text' }
+      )
+      return null
+    }
 
     try {
-      let image = null
-
-      if (asset?.url) {
-        try {
-          const parsed = new URL(asset.url)
-          const match = parsed.pathname.match(
-            /^\/api\/menu-assets\/file\/(menu_[a-f0-9-]+\.(?:jpg|jpeg|png|webp|gif))$/i
-          )
-
-          if (match) {
-            const localPath = join(
-              process.cwd(),
-              process.env.X_DATA_DIR || 'data',
-              'menu-assets',
-              match[1]
-            )
-            image = await readFile(localPath)
-          }
-        } catch (error) {
-          console.warn('[X MENU] Local asset load failed:', error.message)
-        }
-
-        if (!image) {
-          try {
-            const response = await fetch(asset.url)
-            if (response.ok) {
-              image = Buffer.from(await response.arrayBuffer())
-            }
-          } catch (error) {
-            console.warn('[X MENU] Remote asset load failed:', error.message)
-          }
-        }
-      }
-
-      if (!image) {
-        const fallbackPath = join(process.cwd(), 'public', 'x-menu.png')
-        image = await readFile(fallbackPath)
-      }
-
-      await runtime.sendImage(group.group_id, image, menuText())
+      await runtime.safeSendMessage(
+        jid,
+        {
+          image: { url: menuAsset.url },
+          caption
+        },
+        { label: 'menu image' }
+      )
       return null
     } catch (error) {
       console.error('[X MENU] Image delivery failed:', error)
-      return menuText()
+      return caption
     }
   }
 )
 
+register(
+  'cmds',
+  {
+    category: 'core',
+    description: 'List available commands by category',
+    usage: '.cmds [category|command]'
+  },
+  async ({ args }) => {
+    const prefix = String(process.env.X_DEFAULT_PREFIX || '.').trim() || '.'
+    const query = String(args?.[0] || '')
+      .trim()
+      .replace(/^\./, '')
+      .toLowerCase()
+    const grouped = new Map()
+
+    for (const command of commands.values()) {
+      if (!command?.name) continue
+      const category = String(command.category || 'other').trim().toLowerCase()
+      const categoryCommands = grouped.get(category)
+      if (categoryCommands) {
+        categoryCommands.push(command)
+      } else {
+        grouped.set(category, [command])
+      }
+    }
+
+    const categoryOrder = [
+      'core',
+      'media',
+      'games',
+      'ai',
+      'anime',
+      'manga',
+      'group',
+      'moderation',
+      'profile',
+      'economy',
+      'actions',
+      'utilities',
+      'owner',
+      'other'
+    ]
+    const categories = [
+      ...categoryOrder.filter((category) => grouped.has(category)),
+      ...[...grouped.keys()]
+        .filter((category) => !categoryOrder.includes(category))
+        .sort((a, b) => a.localeCompare(b))
+    ]
+    const categoryStyles = {
+      core: ['⚙️', 'Core'],
+      group: ['👥', 'Group'],
+      moderation: ['🛡️', 'Moderation'],
+      profile: ['👤', 'Profile'],
+      economy: ['💰', 'Economy'],
+      games: ['🎮', 'Games'],
+      anime: ['🌸', 'Anime'],
+      manga: ['📚', 'Manga'],
+      media: ['🎵', 'Media'],
+      actions: ['⚡', 'Actions'],
+      ai: ['🤖', 'AI'],
+      utilities: ['🧰', 'Utilities'],
+      owner: ['👑', 'Owner'],
+      other: ['📦', 'Other']
+    }
+
+    const styleFor = (category) =>
+      categoryStyles[category] || [
+        '📦',
+        category
+          .replace(/[_-]+/g, ' ')
+          .replace(/\b\w/g, (letter) => letter.toUpperCase())
+      ]
+    const header = (title) => [
+      '╬════════════════════════════════════╬',
+      `   🩸 ${title} 🩸`,
+      '╬════════════════════════════════════╬',
+      ''
+    ]
+
+    if (!query) {
+      if (!categories.length) return 'No command categories are registered.'
+
+      const lines = [
+        ...header('VELVET ARSENAL'),
+        '╭───「 CATEGORIES 」───',
+        ...categories.map((category) => {
+          const [icon, label] = styleFor(category)
+          return `│ ${icon} ${label} » ${prefix}cmds ${category}`
+        }),
+        '╰────────────────────',
+        '',
+        `» Type ${prefix}cmds <category> to view its commands.`
+      ]
+      return lines.join('\n')
+    }
+
+    if (grouped.has(query)) {
+      const [icon, label] = styleFor(query)
+      const categoryCommands = [...grouped.get(query)].sort((a, b) =>
+        String(a.name).localeCompare(String(b.name))
+      )
+      const maxNameLength = Math.max(
+        ...categoryCommands.map((command) => String(command.name).length)
+      )
+      const lines = [
+        ...header(`${label.toUpperCase()} COMMANDS`),
+        `╭───「 ${icon} ${label.toUpperCase()} 」───`,
+        ...categoryCommands.map((command) => {
+          const name = `${prefix}${command.name}`.padEnd(
+            maxNameLength + prefix.length + 1
+          )
+          const description =
+            String(command.description || 'No description available.')
+              .replace(/\s+/g, ' ')
+              .trim()
+          return `│ ${name} » ${description}`
+        }),
+        '╰────────────────────'
+      ]
+      return lines.join('\n')
+    }
+
+    const command = commands.get(query)
+    if (command) {
+      const category = String(command.category || 'other').trim().toLowerCase()
+      const [icon, label] = styleFor(category)
+      const usage = String(command.usage || `${prefix}${command.name}`).trim()
+      const description = String(
+        command.description || 'No description available.'
+      )
+        .replace(/\s+/g, ' ')
+        .trim()
+      return [
+        ...header('VELVET ARSENAL'),
+        `╭───「 ${icon} ${label.toUpperCase()} 」───`,
+        `│ Usage: ${usage}`,
+        `│ ${description}`,
+        '╰────────────────────'
+      ].join('\n')
+    }
+
+    return `Unknown category or command: "${query}". Type ${prefix}cmds to see available categories.`
+  }
+)
 
 register(
   'help',
@@ -959,7 +948,6 @@ register(
   }
 )
 
-
 register(
   'ping',
   {
@@ -991,7 +979,6 @@ register(
   }
 )
 
-
 register(
   'status',
   {
@@ -1011,10 +998,9 @@ register(
   }
 )
 
-
-/* =========================================================
+/* ───────────────────────
    X MODE — Meta-AI-style behavior toggle
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'xmode',
@@ -1069,10 +1055,9 @@ register(
   }
 )
 
-
-/* =========================================================
+/* ───────────────────────
    IMAGINE — manual image generation
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'imagine',
@@ -1419,10 +1404,9 @@ register(
   }
 )
 
-
-/* =========================================================
+/* ───────────────────────
    SOLO LEVELING — The System
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'arise',
@@ -1484,7 +1468,6 @@ register(
   }
 )
 
-
 register(
   'system',
   {
@@ -1524,7 +1507,6 @@ register(
     })
   }
 )
-
 
 register(
   'shadow',
@@ -1599,7 +1581,6 @@ register(
   }
 )
 
-
 register(
   'owner',
   {
@@ -1615,10 +1596,9 @@ register(
   }
 )
 
-
-/* =========================================================
+/* ───────────────────────
    GROUP CONTROL
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'groupinfo',
@@ -1638,7 +1618,6 @@ register(
     ].join('\n')
 )
 
-
 register(
   'members',
   {
@@ -1653,7 +1632,6 @@ register(
     )
 )
 
-
 register(
   'admins',
   {
@@ -1663,7 +1641,6 @@ register(
   async ({ runtime, group }) =>
     runtime.formatAdmins(group.group_id)
 )
-
 
 register(
   'tagall',
@@ -1774,7 +1751,6 @@ register(
   }
 )
 
-
 register(
   'rules',
   {
@@ -1786,7 +1762,6 @@ register(
       ? [`📜 *Group Rules*`, group.rules].join('\n')
       : 'No rules configured for this group.'
 )
-
 
 register(
   'ban',
@@ -1848,7 +1823,6 @@ register(
   }
 )
 
-
 register(
   'unban',
   {
@@ -1875,7 +1849,6 @@ register(
       : `⚠️ *${name}* was not banned.`
   }
 )
-
 
 register(
   'banlist',
@@ -1904,7 +1877,6 @@ register(
     return ['🚫 *BAN LIST*', '', ...lines].join('\n')
   }
 )
-
 
 function parseBanDuration(input) {
   if (!input || typeof input !== 'string') return null
@@ -1939,7 +1911,6 @@ function formatBanDuration(ms) {
   if (mins > 0) return `${mins}m`
   return `${secs}s`
 }
-
 
 register(
   'giflist',
@@ -1992,7 +1963,6 @@ register(
     ].join('\n')
   }
 )
-
 
 register(
   'hidetag',
@@ -2077,7 +2047,6 @@ register(
   }
 )
 
-
 register(
   'stats',
   {
@@ -2087,7 +2056,6 @@ register(
   async ({ runtime, group }) =>
     runtime.formatStats(group.group_id)
 )
-
 
 register(
   'welcome',
@@ -2144,7 +2112,6 @@ register(
   }
 )
 
-
 register(
   'goodbye',
   {
@@ -2200,7 +2167,6 @@ register(
   }
 )
 
-
 register(
   'setrules',
   {
@@ -2233,10 +2199,9 @@ register(
   }
 )
 
-
-/* =========================================================
+/* ───────────────────────
    MODERATION
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'antilink',
@@ -2265,7 +2230,6 @@ register(
   }
 )
 
-
 register(
   'antispam',
   {
@@ -2292,7 +2256,6 @@ register(
     return `🛡️ Anti-spam ${value === 'on' ? 'enabled' : 'disabled'}.`
   }
 )
-
 
 register(
   'mute',
@@ -2326,7 +2289,6 @@ register(
   }
 )
 
-
 register(
   'unmute',
   {
@@ -2358,7 +2320,6 @@ register(
     }
   }
 )
-
 
 register(
   'cards',
@@ -2418,7 +2379,6 @@ register(
       : '📝 *Command cards disabled.* Plain text mode.'
   }
 )
-
 
 register(
   'antidelete',
@@ -2496,7 +2456,6 @@ register(
       : '🔕 *Anti-delete: OFF.* Deleted messages will be ignored.'
   }
 )
-
 
 register(
   'antiview',
@@ -2582,7 +2541,6 @@ register(
       : '🔕 *Antiview: OFF.* View-once will be ignored.'
   }
 )
-
 
 register(
   'vv',
@@ -2693,7 +2651,6 @@ register(
   }
 )
 
-
 register(
   'agent',
   {
@@ -2768,7 +2725,6 @@ register(
   }
 )
 
-
 register(
   'vibe',
   {
@@ -2793,7 +2749,6 @@ register(
     ].join('\n')
   }
 )
-
 
 register(
   'memory',
@@ -2832,7 +2787,6 @@ register(
     ].join('\n')
   }
 )
-
 
 register(
   'forget',
@@ -2884,7 +2838,6 @@ register(
   }
 )
 
-
 register(
   'warn',
   {
@@ -2931,7 +2884,6 @@ register(
   }
 )
 
-
 register(
   'warnings',
   {
@@ -2955,7 +2907,6 @@ register(
     }
   }
 )
-
 
 register(
   'clearwarn',
@@ -2986,7 +2937,6 @@ register(
     }
   }
 )
-
 
 register(
   'approveall',
@@ -3062,7 +3012,6 @@ register(
       .join('\n')
   }
 )
-
 
 register(
   'add',
@@ -3151,7 +3100,6 @@ register(
   }
 )
 
-
 for (const action of ['kick', 'promote', 'demote']) {
   register(
     action,
@@ -3212,10 +3160,9 @@ for (const action of ['kick', 'promote', 'demote']) {
   )
 }
 
-
-/* =========================================================
+/* ───────────────────────
    PROFILE / RANK
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'profile',
@@ -3247,7 +3194,6 @@ register(
   }
 )
 
-
 register(
   'rank',
   {
@@ -3257,7 +3203,6 @@ register(
   async ({ runtime, group, sender }) =>
     runtime.formatRank(group.group_id, sender)
 )
-
 
 register(
   'leaderboard',
@@ -3284,7 +3229,6 @@ register(
     ].join('\n')
   }
 )
-
 
 register(
   'profilecard',
@@ -3321,7 +3265,6 @@ register(
   }
 )
 
-
 register(
   'lbcard',
   {
@@ -3354,10 +3297,9 @@ register(
   }
 )
 
-
-/* =========================================================
+/* ───────────────────────
    ECONOMY
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'balance',
@@ -3373,7 +3315,6 @@ register(
     return `💰 Wallet: *${member.coins} KC* · Bank: *${member.bank} KC*`
   }
 )
-
 
 register(
   'daily',
@@ -3392,7 +3333,6 @@ register(
         ].join('\n')
   }
 )
-
 
 register(
   'weekly',
@@ -3434,7 +3374,6 @@ register(
   }
 )
 
-
 register(
   'monthly',
   {
@@ -3475,7 +3414,6 @@ register(
   }
 )
 
-
 register(
   'work',
   {
@@ -3498,7 +3436,6 @@ register(
     ].join('\n')
   }
 )
-
 
 register(
   'pay',
@@ -3534,7 +3471,6 @@ register(
   }
 )
 
-
 register(
   'give',
   {
@@ -3560,7 +3496,6 @@ register(
   }
 )
 
-
 register(
   'bank',
   {
@@ -3575,7 +3510,6 @@ register(
       : 'Member not synchronized.'
   }
 )
-
 
 register(
   'deposit',
@@ -3596,7 +3530,6 @@ register(
   }
 )
 
-
 register(
   'withdraw',
   {
@@ -3615,7 +3548,6 @@ register(
     return `💵 Withdrawn. Wallet: ${member.coins} KC · Bank: ${member.bank} KC`
   }
 )
-
 
 register(
   'richlist',
@@ -3640,7 +3572,6 @@ register(
   }
 )
 
-
 register(
   'economy',
   {
@@ -3664,10 +3595,9 @@ register(
   }
 )
 
-
-/* =========================================================
+/* ───────────────────────
    VICE — Black Market
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'shop',
@@ -3730,7 +3660,6 @@ register(
   }
 )
 
-
 register(
   'buy',
   {
@@ -3767,7 +3696,6 @@ register(
   }
 )
 
-
 register(
   'sell',
   {
@@ -3794,7 +3722,6 @@ register(
     ].join('\n')
   }
 )
-
 
 register(
   'inv',
@@ -3847,7 +3774,6 @@ register(
   }
 )
 
-
 register(
   'equip',
   {
@@ -3871,7 +3797,6 @@ register(
       : `⬜ Unequipped *${result.item.name}*.`
   }
 )
-
 
 register(
   'use',
@@ -3899,10 +3824,9 @@ register(
   }
 )
 
-
-/* -------------------------------------------------------------------------- */
+/* ─────────────────────── */
 /* VICE — crime                                                               */
-/* -------------------------------------------------------------------------- */
+/* ─────────────────────── */
 
 register(
   'grind',
@@ -3935,7 +3859,6 @@ register(
     ].filter(Boolean).join('\n')
   }
 )
-
 
 register(
   'rob',
@@ -3999,7 +3922,6 @@ register(
   }
 )
 
-
 register(
   'smuggle',
   {
@@ -4043,10 +3965,9 @@ register(
   }
 )
 
-
-/* -------------------------------------------------------------------------- */
+/* ─────────────────────── */
 /* VICE — combat                                                              */
-/* -------------------------------------------------------------------------- */
+/* ─────────────────────── */
 
 function renderCombatResult(result, runtime, groupId, targetJid, attackerJid) {
   if (result.error) return result.error
@@ -4151,7 +4072,6 @@ register(
   }
 )
 
-
 register(
   'execute',
   {
@@ -4177,7 +4097,6 @@ register(
     return renderCombatResult(result, runtime, group.group_id, target, sender)
   }
 )
-
 
 register(
   'pvp',
@@ -4233,10 +4152,9 @@ register(
   }
 )
 
-
-/* =========================================================
+/* ───────────────────────
    VICE — career
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'career',
@@ -4316,10 +4234,9 @@ register(
   }
 )
 
-
-/* -------------------------------------------------------------------------- */
+/* ─────────────────────── */
 /* VICE — heal / bail                                                         */
-/* -------------------------------------------------------------------------- */
+/* ─────────────────────── */
 
 register(
   'heal',
@@ -4358,7 +4275,6 @@ register(
   }
 )
 
-
 register(
   'bail',
   {
@@ -4396,10 +4312,9 @@ register(
   }
 )
 
-
-/* -------------------------------------------------------------------------- */
+/* ─────────────────────── */
 /* VICE — territory wars                                                      */
-/* -------------------------------------------------------------------------- */
+/* ─────────────────────── */
 
 register(
   'war',
@@ -4591,7 +4506,6 @@ register(
   }
 )
 
-
 register(
   'territories',
   {
@@ -4644,10 +4558,9 @@ register(
   }
 )
 
-
-/* -------------------------------------------------------------------------- */
+/* ─────────────────────── */
 /* VICE — crews                                                               */
-/* -------------------------------------------------------------------------- */
+/* ─────────────────────── */
 
 register(
   'crew',
@@ -4890,10 +4803,9 @@ register(
   }
 )
 
-
-/* -------------------------------------------------------------------------- */
+/* ─────────────────────── */
 /* VICE — missions                                                            */
-/* -------------------------------------------------------------------------- */
+/* ─────────────────────── */
 
 register(
   'mission',
@@ -4977,7 +4889,6 @@ register(
   }
 )
 
-
 register(
   'season',
   {
@@ -5011,10 +4922,9 @@ register(
   }
 )
 
-
-/* =========================================================
+/* ───────────────────────
    VICE — dashboard
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'vice',
@@ -5110,7 +5020,6 @@ register(
   }
 )
 
-
 register(
   'vicehelp',
   {
@@ -5138,10 +5047,9 @@ register(
   }
 )
 
-
-/* =========================================================
+/* ───────────────────────
    GAMES
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'games',
@@ -5163,7 +5071,6 @@ register(
       `.hangman <letter>`
     ].join('\n')
 )
-
 
 const EXTENDED_GAMES = [
   { name: 'truth', description: '🎭 Ask a truth question' },
@@ -5209,7 +5116,6 @@ for (const game of EXTENDED_GAMES) {
   )
 }
 
-
 for (const type of [
   'coinflip',
   'dice',
@@ -5241,7 +5147,6 @@ for (const type of [
       )
   )
 }
-
 
 function formatGame(result, runtime = null, groupId = null) {
   if (!result) return 'No result.'
@@ -5369,10 +5274,9 @@ function formatGame(result, runtime = null, groupId = null) {
   return 'Done.'
 }
 
-
-/* =========================================================
+/* ───────────────────────
    ANIME
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'anime',
@@ -5480,7 +5384,6 @@ register(
   }
 )
 
-
 register(
   'animequote',
   {
@@ -5490,10 +5393,9 @@ register(
   async () => `🎌 ${await animeQuote()}`
 )
 
-
-/* =========================================================
+/* ───────────────────────
    MOVIE
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'movie',
@@ -5527,17 +5429,17 @@ register(
 
     const lower = raw.toLowerCase()
 
-    /* -------------------------------------------
+    /* ───────────────────────
      * .movie cancel
-     * ----------------------------------------- */
+     * ─────────────────────── */
     if (lower === 'cancel') {
       clearPendingMovie(group.group_id, sender)
       return '🎬 Movie request cancelled.'
     }
 
-    /* -------------------------------------------
+    /* ───────────────────────
      * Resolution / source selection
-     * ----------------------------------------- */
+     * ─────────────────────── */
     const pending = getPendingMovie(group.group_id, sender)
 
     if (pending) {
@@ -5673,9 +5575,9 @@ register(
       ].join('\n')
     }
 
-    /* -------------------------------------------
+    /* ───────────────────────
      * New search
-     * ----------------------------------------- */
+     * ─────────────────────── */
     let movie
 
     try {
@@ -5769,10 +5671,9 @@ register(
   }
 )
 
-
-/* =========================================================
+/* ───────────────────────
    LYRICS
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'lyrics',
@@ -5932,10 +5833,9 @@ register(
   }
 )
 
-
-/* =========================================================
+/* ───────────────────────
    MANGA
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'manga',
@@ -6040,7 +5940,6 @@ register(
     return previewText
   }
 )
-
 
 export async function handleMangaSelection({ runtime, group, sender, args }) {
   const key = `${group.group_id}:${sender}`
@@ -6173,10 +6072,9 @@ export async function handleMangaSelection({ runtime, group, sender, args }) {
   return null
 }
 
-
-/* =========================================================
+/* ───────────────────────
    MEDIA
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'gif',
@@ -6203,7 +6101,6 @@ register(
     return null
   }
 )
-
 
 register(
   'play',
@@ -6345,10 +6242,119 @@ register(
   }
 )
 
+/* ───────────────────────
+   MEDIA — VIDEO
+   ─────────────────────── */
 
-/* =========================================================
+const sendVideo = async ({ runtime, group, sender, args }) => {
+  const query = Array.isArray(args) ? args.join(' ').trim() : ''
+  const jid = group?.group_id || sender
+
+  if (!query) {
+    return [
+      `🎬 *VELVET DEVIL VIDEO*`,
+      '',
+      `Usage: .video <YouTube query>`,
+      '',
+      `Example:`,
+      `.video Never Gonna Give You Up`,
+    ].join('\n')
+  }
+
+  if (!jid || !runtime?.safeSendMessage) {
+    return '❌ WhatsApp is not connected. Please try again when X is online.'
+  }
+
+  try {
+    await runtime.safeSendMessage(
+      jid,
+      {
+        text: '⬇️ *Downloading high-res video...*\nPlease wait, this may take a moment.',
+      },
+      { label: 'video downloading' }
+    )
+
+    const video = await playSearch(query)
+    const result = await downloadVideo(video.url)
+
+    if (!result.buffer) throw new Error('EMPTY_OUTPUT')
+
+    const duration = Number(result.duration) || 0
+    const minutes = Math.floor(duration / 60)
+    const seconds = String(Math.floor(duration % 60)).padStart(2, '0')
+
+    await runtime.safeSendMessage(
+      jid,
+      {
+        document: result.buffer,
+        mimetype: result.mimetype || 'video/mp4',
+        fileName: result.fileName,
+        caption: [
+          `🎬 *${result.title || 'Unknown'}*`,
+          duration > 0 ? `⏱️ ${minutes}:${seconds}` : null,
+          `📦 ${(result.size / 1024 / 1024).toFixed(2)} MB`,
+          '',
+          `✅ High-res MP4 (best quality)`,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      },
+      { label: 'video result' }
+    )
+
+    return null
+  } catch (error) {
+    console.error('[X VIDEO] error:', error)
+    const errorCode = String(
+      error?.message || error?.code || error?.name || ''
+    )
+    const maxMb = Number(process.env.X_PLAY_MAX_VIDEO_MB || 100)
+    const messages = {
+      NO_RESULTS: '❌ No matching video was found.',
+      YTDLP_MISSING: '❌ yt-dlp is not installed or is not available in PATH.',
+      VIDEO_TOO_LARGE: `❌ The video exceeds the ${maxMb} MB limit.`,
+      EMPTY_OUTPUT: '❌ The video download produced an empty file.',
+      VIDEO_NOT_FOUND: '❌ The downloaded video file was not found.',
+    }
+    const message =
+      messages[errorCode] ||
+      '❌ X could not download that video. Please try another search.'
+    try {
+      await runtime.safeSendMessage(
+        jid,
+        { text: message },
+        { label: 'video error' }
+      )
+    } catch (sendError) {
+      console.error('[X VIDEO] failed to send error message:', sendError)
+    }
+    return null
+  }
+}
+
+register(
+  'video',
+  {
+    category: 'media',
+    description: 'Search YouTube and send the highest quality MP4 video',
+    usage: '.video <query>',
+  },
+  sendVideo
+)
+
+register(
+  'ytmp4',
+  {
+    category: 'media',
+    description: 'Search YouTube and send the highest quality MP4 video',
+    usage: '.ytmp4 <query>',
+  },
+  sendVideo
+)
+
+/* ───────────────────────
    OWNER
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'setpublic',
@@ -6380,7 +6386,6 @@ register(
   }
 )
 
-
 register(
   'setprivate',
   {
@@ -6410,7 +6415,6 @@ register(
     return ['🔒 *BOT MODE: PRIVATE*', '', 'Only the owner can use X now.'].join('\n')
   }
 )
-
 
 register(
   'cmdimg',
@@ -6479,7 +6483,6 @@ register(
   }
 )
 
-
 register(
   'warmode',
   {
@@ -6516,10 +6519,9 @@ register(
   }
 )
 
-
-/* =========================================================
+/* ───────────────────────
    ACTION COMMANDS
-   ========================================================= */
+   ─────────────────────── */
 
 function resolveActionTarget({ message, mentions }) {
   if (Array.isArray(mentions) && mentions.length) {
@@ -6538,7 +6540,6 @@ function resolveActionTarget({ message, mentions }) {
 
   return null
 }
-
 
 let actionList = []
 
@@ -6885,10 +6886,9 @@ register(
   }
 )
 
-
-/* =========================================================
+/* ───────────────────────
    BOT HUNTER
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'hunt',
@@ -6973,7 +6973,6 @@ register(
     return 'Usage: .hunt on|off|status|vibe|kick'
   }
 )
-
 
 register(
   'auth',
@@ -7070,7 +7069,6 @@ register(
   }
 )
 
-
 register(
   'unauth',
   {
@@ -7118,7 +7116,6 @@ register(
   }
 )
 
-
 register(
   'authlist',
   {
@@ -7163,7 +7160,6 @@ register(
   }
 )
 
-
 register(
   'botlist',
   {
@@ -7201,7 +7197,6 @@ register(
   }
 )
 
-
 register(
   'vassals',
   {
@@ -7230,7 +7225,6 @@ register(
     return ['👑 *VASSALS OF X*', '', ...lines].join('\n')
   }
 )
-
 
 register(
   'execute',
@@ -7308,7 +7302,6 @@ register(
   }
 )
 
-
 register(
   'mercy',
   {
@@ -7368,7 +7361,6 @@ register(
   }
 )
 
-
 register(
   'revoke',
   {
@@ -7412,10 +7404,9 @@ register(
   }
 )
 
-
-/* =========================================================
+/* ───────────────────────
    FAV / BEEF
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'fav',
@@ -7443,40 +7434,67 @@ register(
   }
 )
 
-
 register(
   'beef',
   {
     category: 'core',
-    description: "🥊 Show X's current beefs",
+    description: '🥩 Send a playful roast to a mentioned user',
     admin: false
   },
-  async ({ runtime, group }) => {
-    if (!group?.group_id) return 'this is a group thing chale'
+  async ({ runtime, group, sender, mentions, message }) => {
+    const mentionedTarget = Array.isArray(mentions)
+      ? mentions.find((jid) => typeof jid === 'string' && jid.trim())
+      : null
+    const targetJid = mentionedTarget || sender || null
+    const roast = getRandomRoast()
 
-    const beefs = getBeefs(group.tenant_id, group.group_id)
-
-    if (!beefs.length) {
-      return 'X has no beefs in this group right now.'
+    if (!roast?.text) {
+      return 'No playful roasts are available right now.'
     }
 
-    const lines = beefs.map((beef) => {
-      const name = runtime.getMemberDisplayName(
-        group.group_id,
-        beef.jid,
-        'someone'
-      )
-      return `🥊 ${name} — ${beef.reason}`
-    })
+    const isSender = targetJid === sender
+    const pushName = isSender
+      ? String(message?.pushName || '').replace(/\s+/g, ' ').trim()
+      : ''
+    const storedName =
+      group?.group_id && targetJid
+        ? runtime.getMemberDisplayName(
+            group.group_id,
+            targetJid,
+            isSender ? 'you' : 'someone'
+          )
+        : ''
+    const displayName = pushName || storedName || (targetJid ? 'someone' : 'you')
+    const targetMention = createMention(targetJid)
+    const targetLabel = targetMention.text
+      ? `${targetMention.text} (${displayName})`
+      : displayName
 
-    return ['🥊 *X BEEFS*', '', ...lines].join('\n')
+    const velvetSignatures = [
+      '» - The Velvet Devil 👠',
+      '» - Signed in Blood 🩸',
+    ];
+    const velvetSignature =
+      velvetSignatures[Math.floor(Math.random() * velvetSignatures.length)];
+
+    return {
+      text: [
+        '╬───「 🩸 BEEF SERVED 」───╬',
+        `│ Target: ${targetLabel}`,
+        '│',
+        `│ "${roast.text}"`,
+        '│',
+        `│ ${velvetSignature}`,
+        '╰───────────────────────────╯'
+      ].join('\n'),
+      mentions: targetMention.jid ? [targetMention.jid] : []
+    }
   }
 )
 
-
-/* =========================================================
+/* ───────────────────────
    ANONYMOUS
-   ========================================================= */
+   ─────────────────────── */
 
 register(
   'confess',
@@ -7514,7 +7532,6 @@ register(
   }
 )
 
-
 register(
   'reveal',
   {
@@ -7548,20 +7565,109 @@ register(
   }
 )
 
+/* ───────────────────────
+   VIEW ONCE
+   ─────────────────────── */
 
-/* =========================================================
+register(
+  'vv',
+  {
+    category: 'media',
+    description: 'Decrypt and resend a View Once media message',
+    usage: '.vv (reply to a View Once message)',
+  },
+  async ({ runtime, group, sender, message }) => {
+    if (!group?.group_id) {
+      return 'Use inside a group.'
+    }
+
+    const quotedMessage =
+      message?.message?.extendedTextMessage?.contextInfo
+        ?.quotedMessage || message?.message?.imageMessage?.contextInfo
+        || message?.message?.videoMessage?.contextInfo || null
+
+    const quotedId = quotedMessage?.key?.id || null
+    const quotedSender = quotedMessage?.participant || quotedMessage?.sender || null
+
+    if (!quotedId) {
+      return '❌ Please reply to a message.'
+    }
+
+    /* -------------------------------------------------
+     * Unwrap the View Once envelope
+     * ------------------------------------------------- */
+    let innerMessage
+    try {
+      innerMessage = unwrapViewOnce(quotedMessage)
+    } catch (e) {
+      return `❌ Failed to unwrap View Once envelope: ${e?.message || 'unknown error'}`
+    }
+
+    if (!innerMessage) {
+      return '❌ No View Once media found.'
+    }
+
+    /* -------------------------------------------------
+     * Download the media
+     * ------------------------------------------------- */
+    let mediaMessage
+    try {
+      mediaMessage = await downloadMediaMessage(innerMessage)
+    } catch (err) {
+      return `❌ Download failed: ${err?.message || 'unknown error'}`
+    }
+
+    /* -------------------------------------------------
+     * Format the caption
+     * ------------------------------------------------- */
+    const targetLabel = quotedSender
+      ? `${createMention(quotedSender).text} (${sender.pushName || sender.pushName || ''})`
+      : sender.pushName || sender.pushName || 'you'
+
+    const caption = [
+      '╬───「 🩸 VIEW ONCE DECRYPTED 」───╬',
+      `│ Target: ${targetLabel}`,
+      '│',
+      '│ "I see everything. Nothing is hidden from the Devil."',
+      '╰───────────────────────────╯',
+    ].join('\n')
+
+    /* -------------------------------------------------
+     * Send the media back to the group
+     * ------------------------------------------------- */
+    const jid = group.group_id || sender
+
+    const result = await runtime.sendMessage(
+      jid,
+      {
+        [innerMessage.message?.imageMessage?.messageType || 'imageMessage']: innerMessage,
+        caption,
+        mentions: innerMessage.message?.imageMessage?.metadata?.directPath
+          ? [innerMessage.message?.imageMessage?.metadata?.directPath]
+          : [],
+      },
+      { quotedMessageId: innerMessage.key?.id }
+    )
+
+    return result ? null : '❌ Failed to send media.'
+  }
+)
+
+/* ───────────────────────
+   DEVICE
+   ─────────────────────── */
+
+/* ───────────────────────
    COMMAND API
-   ========================================================= */
+   ─────────────────────── */
 
-export function getCommand(name) {
+function getCommand(name) {
   return commands.get(String(name).toLowerCase())
 }
-
 
 export function commandList() {
   return [...commands.values()].map(({ handler, ...metadata }) => metadata)
 }
-
 
 export async function executeCommand(ctx, name, args) {
   const command = getCommand(name)
