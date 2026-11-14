@@ -56,11 +56,6 @@ import {
   isAntideleteEnabled
 } from './db.mjs'
 
-  register('stab', { category: 'actions', description: 'Stab a user', usage: '.stab @user' }, async (ctx) => sendActionGif('shoot', 'stab', ctx)),
-  register('slap', { category: 'actions', description: 'Slap a user', usage: '.slap @user' }, async (ctx) => sendActionGif('slap', 'slap', ctx)),
-  register('kick', { category: 'actions', description: 'Kick a user', usage: '.kick @user' }, async (ctx) => sendActionGif('kick', 'kick', ctx)),
-  register('bite', { category: 'actions', description: 'Bite a user', usage: '.bite @user' }, async (ctx) => sendActionGif('bite', 'bite', ctx))
-
 import {
   awakenSequence,
   hunterStatusWindow,
@@ -136,12 +131,48 @@ const register = (name, meta, handler) =>
     handler
   })
 
-function memberMention(
-  _runtime,
-  _groupId,
-  jid
-) {}
+function memberMention(runtime, groupId, jid) {
+  if (!jid) return { text: 'someone', jid: null }
   return createMention(jid)
+}
+
+async function sendActionGif(category, actionName, ctx) {
+  const { runtime, group, sender, message } = ctx
+  let target = sender
+  const mentioned =
+    message?.message?.extendedTextMessage?.contextInfo?.mentionedJid ||
+    message?.mentionedJid ||
+    []
+  if (mentioned.length > 0) target = mentioned[0]
+
+  const senderTag = `@${sender.split('@')[0]}`
+  const targetTag = `@${target.split('@')[0]}`
+
+  try {
+    const response = await fetch(`https://nekos.best/api/v2/${category}`)
+    if (!response.ok) throw new Error('API failed')
+    const data = await response.json()
+    const gifUrl = data.results[0].url
+
+    const text = [
+      `╬───「 🩸 ${actionName.toUpperCase()} 」───╬`,
+      `│ ${senderTag} has ${actionName.toLowerCase()} ${targetTag}`,
+      '│',
+      '│ "A quick end is a mercy the Devil rarely gives."',
+      '╰───────────────────────────╯'
+    ].join('\n')
+
+    await runtime.safeSendMessage(group?.group_id || sender, {
+      image: { url: gifUrl },
+      caption: text,
+      mentions: [target, sender]
+    })
+  } catch (error) {
+    await runtime.safeSendMessage(group?.group_id || sender, {
+      text: '❌ The Devil\'s blade missed its mark. Try again.'
+    })
+  }
+}
 
 
 async function hasGroupAdminPermission({ runtime, group, sender, message }) {
@@ -2648,6 +2679,11 @@ register(
     }
   }
 )
+
+register('stab', { category: 'actions', description: 'Stab a user', usage: '.stab @user' }, async (ctx) => sendActionGif('shoot', 'stab', ctx))
+register('slap', { category: 'actions', description: 'Slap a user', usage: '.slap @user' }, async (ctx) => sendActionGif('slap', 'slap', ctx))
+register('kick', { category: 'actions', description: 'Kick a user', usage: '.kick @user' }, async (ctx) => sendActionGif('kick', 'kick', ctx))
+register('bite', { category: 'actions', description: 'Bite a user', usage: '.bite @user' }, async (ctx) => sendActionGif('bite', 'bite', ctx))
 
 register(
   'agent',
@@ -6166,10 +6202,8 @@ register(
 
       if (!audio.length) throw new Error('EMPTY_OUTPUT')
 
-      const maxMb = Number(playConfig?.MAX_MB) || 25
-
-      if (audio.length > maxMb * 1024 * 1024) {
-        throw new Error('FILE_TOO_LARGE')
+      if (audio.length > 15 * 1024 * 1024) {
+        return '❌ Song is too large for WhatsApp (15MB limit).'
       }
 
       if (result.thumbnailBuffer?.length) {
@@ -6191,11 +6225,8 @@ register(
         group.group_id,
         {
           audio,
-          mimetype: result.mimetype || 'audio/mpeg',
-          ptt: true,
-          fileName:
-            result.fileName ||
-            `${result.artist || 'Unknown'} - ${result.title || 'Audio'}.mp3`
+          mimetype: 'audio/mpeg',
+          fileName: result.fileName || `${result.artist || 'Unknown'} - ${result.title || 'Audio'}.mp3`
         },
         { label: 'play audio result' }
       )
@@ -7659,7 +7690,7 @@ register(
    COMMAND API
    ─────────────────────── */
 
-function getCommand(name) {
+export function getCommand(name) {
   return commands.get(String(name).toLowerCase())
 }
 

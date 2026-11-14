@@ -1,0 +1,724 @@
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import yts from 'yt-search';
+import ffmpeg from 'fluent-ffmpeg';
+import sanitize from 'sanitize-filename';
+import pLimit from 'p-limit';
+import sharp from 'sharp';
+
+const MAX_MB =
+  Number(process.env.X_PLAY_MAX_MB || 25);
+
+const MAX_DURATION =
+  Number(process.env.X_PLAY_MAX_DURATION_SECONDS || 600);
+
+const MAX_VIDEO_MB =
+  Number(process.env.X_PLAY_MAX_VIDEO_MB || 100);
+
+const TIMEOUT_MS =
+  Number(process.env.X_PLAY_TIMEOUT_MS || 30000);
+
+const CONCURRENCY =
+  Number(process.env.X_PLAY_CONCURRENCY || 2);
+
+const TMP_ROOT =
+  process.env.X_PLAY_TMP_DIR ||
+  path.join('data', 'tmp', 'play');
+
+const YTDLP_BIN =
+  process.env.X_PLAY_YTDLP_BIN ||
+  (process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+
+/* ---- BYPASS: geo spoof country ---- */
+const GEO_COUNTRY =
+  process.env.X_PLAY_GEO_COUNTRY || 'US';
+
+const limit = pLimit(Math.max(1, CONCURRENCY));
+
+/* -------------------------------------------------------
+ * Temporary directory
+ * ----------------------------------------------------- */
+async function ensureTmpDir() {
+  await fsp.mkdir(TMP_ROOT, { recursive: true });
+}
+
+/* ── Play Mode queue system ──────────────────────────────── */
+const playQueue = [];
+let playing = false;
+const stopped = false;
+const queueLimit = pLimit(Math.max(1, CONCURRENCY));
+
+function playLog(...args) {
+  console.log('[X PLAY]', ...args);
+}
+
+/* ── Queue control ────────────────────────────────────────── */
+export async function playService(mode = 'normal') {
+  playLog('[PLAY] Service started (mode:', mode, ')');
+
+  await ensureTmpDir();
+
+  if (mode === 'play') {
+    playLog('[PLAY] Play Mode active — X will play your library of audio');
+    stopped = false;
+  }
+
+  return {
+    enqueue: async (audioEntry) => {
+      playQueue.push(audioEntry);
+      playLog('[QUEUE]', playQueue.length, 'tracks waiting');
+      if (!playing && !stopped) {
+        await processQueue();
+      }
+    },
+    stop: () => {
+      stopped = true;
+      playLog('🔴 Play mode stopped — clearing queue and cancelling current track');
+      if (playing) {
+        playing = false;
+        playQueue.length = 0;
+      }
+    },
+    start: async () => {
+      stopped = false;
+      playLog('[PLAY] Play mode reactivated. Queue:', playQueue.length, 'track(s) awaiting');
+      if (playQueue.length > 0) {
+        await processQueue();
+      }
+    },
+    get state() {
+      return { playing, stopped, queueLength: playQueue.length };
+    },
+  };
+}
+
+async function processQueue() {
+  if (stopped || playing) return;
+  if (playQueue.length === 0) return;
+
+  const entry = playQueue.shift();
+  playing = true;
+  playLog('[PLAY] ▶️ Now playing:', entry.title || 'unknown');
+
+  try {
+    await playEntry(entry);
+    playing = false;
+    if (!stopped && playQueue.length > 0) {
+      processQueue();
+    }
+  } catch (error) {
+    console.error('[X PLAY] Track failed:', error?.message || error);
+    if (!stopped) {
+      processQueue();
+    }
+  }
+}
+
+async function playEntry(entry) {
+  const { url, isMp3, duration, title, thumbnailBuffer } = entry;
+
+  if (isMp3) {
+    const filePath = path.join(TMP_ROOT, `play_${sanitize(title || 'audio')}.mp3`);
+    await fsp.writeFile(filePath, Buffer.from(entry.fileData || ''), 'binary');
+    await playMp3(filePath, null, duration);
+    return;
+  }
+
+  const video = await playSearch(url);
+  const meta = await getMetadata(video.url);
+  const thumbnail = meta?.thumbnail || video.thumbnail;
+
+  const jobId = `${Date.now()}_play_${sanitize(title || 'audio')}`;
+  const outputPath = path.join(TMP_ROOT, `${jobId}.ogg`);
+
+  const args = await buildBypassArgs([
+    '-f', 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+    '--merge-output-format', 'mp4',
+    '-o', outputPath,
+    '--', url
+  ]);
+
+  await runProcess(YTDLP_BIN, args, { timeoutMs: Math.max(TIMEOUT_MS, 300000) });
+
+  if (thumbnail) {
+    await downloadThumbnail(thumbnail, path.join(TMP_ROOT, `${jobId}_cover.jpg`));
+  }
+
+  const info = await fsp.stat(outputPath);
+  if (info.size === 0) throw new Error('EMPTY_OUTPUT');
+
+  await convertToMp3(
+    outputPath,
+    outputPath.replace(/\.mp4$/, '.mp3'),
+    duration,
+    thumbnail ? path.join(TMP_ROOT, `${jobId}_cover.jpg`) : null
+  );
+
+  const finalOgg = path.join(TMP_ROOT, `${jobId}_play.ogg`);
+  await fsp.rename(outputPath.replace(/\.mp4$/, '.ogg'), finalOgg);
+
+  await playOgg(finalOgg, thumbnail, duration);
+}
+
+async function playMp3(mp3Path, thumbnailPath, durationSec) {
+  try {
+    await fsp.unlink(mp3Path).catch(() => {});
+  } catch {}
+
+  try {
+    await convertToMp3(
+      mp3Path,
+      mp3Path.replace(/\.mp3$/, '_temp.mp3'),
+      durationSec,
+      thumbnailPath
+    );
+  } catch (error) {
+    console.error('[X PLAY] FFmpeg conversion failed:', error?.message);
+    throw error;
+  }
+
+  return new Promise((resolve, reject) => {
+    const cmd = spawn('ffplay', [
+      '-autoexit',
+      '-nodisp',
+      '-loglevel', 'error',
+      '-i', mp3Path.replace(/\.mp3$/, '_temp.mp3'),
+    ], { windowsHide: true });
+
+    cmd.stdout.on('data', d => console.log('[PLAY]', d.toString().slice(0,200)));
+    cmd.stderr.on('data', d => console.error('[PLAY-ERR]', d.toString().slice(0,300)));
+
+    cmd.on('error', (err) => {
+      console.error('[X PLAY] ffplay error:', err.message);
+      reject(err);
+    });
+
+    cmd.on('close', (code) => {
+      if (code === 0) {
+        playLog('⏹️ Play finished');
+        resolve();
+      } else {
+        playLog(`⏹️ Play exited with code ${code}`);
+        reject(new Error(`Play exit code ${code}`));
+      }
+    });
+
+    process.on('SIGTERM', () => { cmd.kill('SIGTERM'); playLog('🔇 Play killed by SIGTERM'); });
+    process.on('SIGINT', () => { cmd.kill('SIGINT'); playLog('🔇 Play killed by SIGINT'); });
+  });
+}
+
+async function downloadThumbnail(url, outputPath) {
+  const res = await fetch(url);
+  const buf = await res.arrayBuffer();
+  const buffer = Buffer.from(buf);
+  const image = sharp(buffer);
+  await image.resize(320, 320, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toFile(outputPath);
+}
+
+/* -------------------------------------------------------
+ * Safe filenames
+ * ----------------------------------------------------- */
+function safeName(value) {
+  const result = sanitize(String(value || 'audio'))
+    .replace(/\s+/g, '_')
+    .slice(0, 80);
+  return result || 'audio';
+}
+
+/* -------------------------------------------------------
+ * Generic command runner
+ * ----------------------------------------------------- */
+function runProcess(
+  command,
+  args,
+  { timeoutMs = TIMEOUT_MS, cwd = process.cwd(), maxOutputBytes = 2 * 1024 * 1024 } = {}
+) {
+  return new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    let finished = false;
+
+    const child = spawn(command, args, {
+      cwd,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    const timer = setTimeout(() => {
+      if (finished) return;
+      finished = true;
+      try { child.kill('SIGKILL'); } catch {}
+      const error = new Error('DOWNLOAD_TIMEOUT');
+      error.code = 'DOWNLOAD_TIMEOUT';
+      reject(error);
+    }, timeoutMs);
+
+    child.stdout.on('data', (chunk) => {
+      if (stdout.length < maxOutputBytes) {
+        stdout += chunk.toString().slice(0, maxOutputBytes - stdout.length);
+      }
+    });
+
+    child.stderr.on('data', (chunk) => {
+      if (stderr.length < maxOutputBytes) {
+        stderr += chunk.toString().slice(0, maxOutputBytes - stderr.length);
+      }
+    });
+
+    child.on('error', (error) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      if (error?.code === 'ENOENT') {
+        const e = new Error('YTDLP_MISSING');
+        e.code = 'YTDLP_MISSING';
+        reject(e);
+        return;
+      }
+      reject(error);
+    });
+
+    child.on('close', (code, signal) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+
+      if (code === 0) {
+        resolve({ stdout, stderr, code, signal });
+        return;
+      }
+
+      const error = new Error(stderr.trim() || `Process exited with code ${code}`);
+      error.code = code === 1 ? 'YTDLP_FAILED' : `YTDLP_EXIT_${code}`;
+      error.exitCode = code;
+      error.signal = signal;
+      error.stdout = stdout;
+      error.stderr = stderr;
+      reject(error);
+    });
+  });
+}
+
+/* -------------------------------------------------------
+ * BYPASS: build yt-dlp args with all the tricks
+ * ----------------------------------------------------- */
+async function buildBypassArgs(extra = []) {
+  const args = [
+    '--no-warnings',
+    '--no-playlist',
+    '--ignore-config',
+    '--no-check-certificates',
+
+    /* Retries — survive throttling and transient blocks */
+    '--retries', '10',
+    '--fragment-retries', '10',
+    '--file-access-retries', '10',
+    '--extractor-retries', '5',
+    '--socket-timeout', '30',
+    '--force-ipv4',
+    '--downloader', 'aria2c',
+    '--downloader-args', 'aria2c:-x 16 -s 16 -k 1M',
+
+    /* Geo bypass */
+    '--geo-bypass',
+    '--geo-bypass-country', GEO_COUNTRY,
+
+    /* Bypass age gate and consent */
+    '--age-limit', '99',
+    '--extractor-args', 'youtube:player_client=android',
+  ];
+
+  return args.concat(extra);
+}
+
+/* -------------------------------------------------------
+ * Check yt-dlp
+ * ----------------------------------------------------- */
+async function ytdlpAvailable() {
+  try {
+    await runProcess(YTDLP_BIN, ['--version'], { timeoutMs: 10000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/* -------------------------------------------------------
+ * Check FFmpeg
+ * ----------------------------------------------------- */
+function ffmpegAvailable() {
+  return new Promise((resolve) => {
+    const child = spawn('ffmpeg', ['-version'], { windowsHide: true });
+    child.on('error', () => resolve(false));
+    child.on('close', (code) => resolve(code === 0));
+  });
+}
+
+/* -------------------------------------------------------
+ * Search YouTube
+ * ----------------------------------------------------- */
+export async function playSearch(query) {
+  const search = await yts(query);
+  const videos = (search?.videos || []).filter((video) => {
+    const seconds = Number(video?.seconds || 0);
+    return (
+      Boolean(video?.url) &&
+      seconds > 0 &&
+      seconds <= MAX_DURATION
+    );
+  });
+
+  if (!videos.length) throw new Error('NO_RESULTS');
+  return videos[0];
+}
+
+/* -------------------------------------------------------
+ * Metadata extraction with bypass args
+ * ----------------------------------------------------- */
+async function getMetadata(url) {
+  const args = await buildBypassArgs([
+    '--dump-single-json',
+    '--skip-download',
+    '--',
+    url,
+  ]);
+
+  const result = await runProcess(YTDLP_BIN, args, { timeoutMs: TIMEOUT_MS });
+
+  let data;
+  try {
+    data = JSON.parse(result.stdout);
+  } catch {
+    const error = new Error('YTDLP_METADATA_INVALID');
+    error.code = 'YTDLP_METADATA_INVALID';
+    throw error;
+  }
+
+  if (!data) throw new Error('AUDIO_UNAVAILABLE');
+  return data;
+}
+
+/* -------------------------------------------------------
+ * Download with bypass args
+ * ----------------------------------------------------- */
+async function downloadAudio(url, outputPath) {
+  const args = await buildBypassArgs([
+    '-f', 'bestaudio/best',
+    '--extract-audio',
+    '--audio-format', 'mp3',
+    '--audio-quality', '128K',
+    '--no-embed-metadata',
+    '--no-embed-thumbnail',
+    '-o', outputPath,
+    '--',
+    url,
+  ]);
+
+  try {
+    console.log('[X PLAY] Executing:', YTDLP_BIN, args.join(' '));
+    await runProcess(YTDLP_BIN, args, {
+      timeoutMs: Math.max(TIMEOUT_MS, 120000),
+    });
+  } catch (error) {
+    console.error('[X PLAY] Raw yt-dlp failure:', error.stderr || error.message);
+    const stderr = String(error?.stderr || '');
+    const combined = (stderr + ' ' + String(error?.message || '')).toLowerCase();
+
+    if (
+      combined.includes('requested format is not available') ||
+      combined.includes('format is not available') ||
+      combined.includes('sign in') ||
+      combined.includes('confirm you are not a bot') ||
+      combined.includes('age-restricted') ||
+      combined.includes('this video is not available') ||
+      combined.includes('private video')
+    ) {
+      const e = new Error('AUDIO_UNAVAILABLE');
+      e.code = 'AUDIO_UNAVAILABLE';
+      throw e;
+    }
+
+    throw error;
+  }
+}
+
+/* -------------------------------------------------------
+ * FFmpeg fallback conversion
+ * ----------------------------------------------------- */
+function convertToMp3(input, output, durationSec, thumbnailPath = null) {
+  return new Promise((resolve, reject) => {
+    const isMp3Input = path.extname(input).toLowerCase() === '.mp3';
+    const command = ffmpeg(input);
+
+    if (isMp3Input) {
+      command.audioCodec('copy');
+    } else {
+      command
+        .audioCodec('libmp3lame')
+        .audioBitrate('128k')
+        .audioFrequency(44100)
+        /* Loudness normalisation — every track lands at a consistent,
+           WhatsApp-friendly loudness regardless of source volume. */
+        .audioFilters('loudnorm=I=-16:TP=-1.5:LRA=11');
+    }
+
+    command
+      .audioCodec('libopus')
+      .audioBitrate('48k')
+      .audioFrequency(48000)
+      .audioChannels(1)
+      .format('ogg')
+      .on('error', reject)
+      .on('end', resolve);
+
+    if (thumbnailPath) {
+      command
+        .input(thumbnailPath)
+        .outputOptions(
+          '-map', '0:a:0',
+          '-map', '1:v:0',
+          '-c:v', 'copy',
+          '-id3v2_version', '3',
+          '-disposition:v:0', 'attached_pic',
+          '-metadata:s:v:0', 'title=Album cover',
+          '-metadata:s:v:0', 'comment=Cover (front)',
+        );
+    }
+
+    if (!isMp3Input && durationSec && durationSec > 0) {
+      command.duration(Math.min(durationSec, MAX_DURATION));
+    }
+
+    command.save(output);
+  });
+}
+
+/* -------------------------------------------------------
+ * Verify MP3 output
+ * ----------------------------------------------------- */
+async function verifyOutput(filePath) {
+  const stat = await fsp.stat(filePath);
+  if (!stat.isFile() || stat.size <= 0) throw new Error('EMPTY_OUTPUT');
+
+  const maxBytes = MAX_MB * 1024 * 1024;
+  if (stat.size > maxBytes) throw new Error('FILE_TOO_LARGE');
+  return stat;
+}
+
+/* -------------------------------------------------------
+ * Download video — highest quality MP4
+ * ----------------------------------------------------- */
+export async function downloadVideo(url) {
+  await ensureTmpDir();
+
+  if (!(await ytdlpAvailable())) throw new Error('YTDLP_MISSING');
+
+  let metadata;
+  try {
+    metadata = await getMetadata(url);
+  } catch (error) {
+    console.warn('[X VIDEO] metadata error:', error?.message);
+  }
+
+  const jobId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const outputPath = path.join(TMP_ROOT, `${jobId}_video.%(ext)s`);
+
+  const args = await buildBypassArgs([
+    '-f',
+    'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+    '--merge-output-format',
+    'mp4',
+    '-o',
+    outputPath,
+    '--',
+    url,
+  ]);
+
+  console.log('[X VIDEO] Executing:', YTDLP_BIN, args.join(' '));
+  await runProcess(YTDLP_BIN, args, {
+    timeoutMs: Math.max(TIMEOUT_MS, 300000),
+  });
+
+  const files = await fsp.readdir(TMP_ROOT);
+  const mp4File = files.find((f) => f.startsWith(jobId) && f.endsWith('.mp4'));
+  if (!mp4File) throw new Error('VIDEO_NOT_FOUND');
+
+  const finalPath = path.join(TMP_ROOT, mp4File);
+  const stat = await fsp.stat(finalPath);
+  if (!stat.isFile() || stat.size <= 0) throw new Error('EMPTY_OUTPUT');
+
+  const maxBytes = MAX_VIDEO_MB * 1024 * 1024;
+  if (stat.size > maxBytes) throw new Error('VIDEO_TOO_LARGE');
+
+  const buffer = await fsp.readFile(finalPath);
+  await fsp.unlink(finalPath).catch(() => {});
+
+  return {
+    buffer,
+    title: metadata?.title || 'Unknown',
+    duration: Number(metadata?.duration || 0),
+    fileName: `${safeName(metadata?.title || 'video')}.mp4`,
+    mimetype: 'video/mp4',
+    size: stat.size,
+  };
+}
+
+/* -------------------------------------------------------
+ * Main resolver
+ * ----------------------------------------------------- */
+export async function playResolve(query) {
+  return limit(async () => {
+    await ensureTmpDir();
+
+    if (!(await ytdlpAvailable())) throw new Error('YTDLP_MISSING');
+    if (!(await ffmpegAvailable())) throw new Error('FFMPEG_MISSING');
+
+    const video = await playSearch(query);
+    const duration = Number(video?.seconds || 0);
+
+    if (!duration || duration <= 0) throw new Error('AUDIO_UNAVAILABLE');
+    if (duration > MAX_DURATION) throw new Error('FILE_TOO_LARGE');
+
+    const jobId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const base = safeName(`${video.title}_${video.author?.name || 'unknown'}`);
+    const rawPath = path.join(TMP_ROOT, `${jobId}_${base}.webm`);
+    const mp3Path = path.join(TMP_ROOT, `${jobId}_${base}.mp3`);
+    const coveredMp3Path = path.join(TMP_ROOT, `${jobId}_${base}_covered.mp3`);
+    const thumbnailPath = path.join(TMP_ROOT, `${jobId}_${base}_cover.jpg`);
+
+    const maxBytes = MAX_MB * 1024 * 1024;
+
+    try {
+      let metadata;
+      try {
+        metadata = await getMetadata(video.url);
+      } catch (error) {
+        console.error('[X PLAY] metadata error:', error?.message);
+      }
+
+      const actualDuration = Number(metadata?.duration || duration);
+      if (actualDuration > MAX_DURATION) throw new Error('FILE_TOO_LARGE');
+
+      let thumbnailBuffer = null;
+      const thumbnailUrls = Array.from(
+        new Set([metadata?.thumbnail, video.thumbnail].filter(Boolean)),
+      );
+      for (const thumbnailUrl of thumbnailUrls) {
+        try {
+          const response = await fetch(thumbnailUrl, {
+            signal: AbortSignal.timeout(15000),
+          });
+          if (!response.ok) {
+            throw new Error(`Thumbnail request failed with status ${response.status}`);
+          }
+
+          const contentLength = Number(response.headers.get('content-length') || 0);
+          if (contentLength > 5 * 1024 * 1024) {
+            throw new Error('Thumbnail response exceeded 5 MB');
+          }
+
+          const imageBuffer = Buffer.from(await response.arrayBuffer());
+          if (!imageBuffer.length) throw new Error('Thumbnail response was empty');
+          if (imageBuffer.length > 5 * 1024 * 1024) {
+            throw new Error('Thumbnail response exceeded 5 MB');
+          }
+
+          thumbnailBuffer = await sharp(imageBuffer)
+            .resize(320, 320, { fit: 'inside', withoutEnlargement: true })
+            .jpeg({ quality: 80 })
+            .toBuffer();
+          await fsp.writeFile(thumbnailPath, thumbnailBuffer, { mode: 0o600 });
+          break;
+        } catch (error) {
+          console.warn('[X PLAY] thumbnail fetch failed:', error?.message || error);
+        }
+      }
+
+      await downloadAudio(video.url, mp3Path);
+
+      let stat;
+      let usedFallbackConversion = false;
+      let finalMp3Path = mp3Path;
+      try {
+        stat = await verifyOutput(mp3Path);
+      } catch (error) {
+        usedFallbackConversion = true;
+        console.warn('[X PLAY] direct MP3 unavailable, trying raw + FFmpeg:', error?.message);
+
+        const rawArgs = buildBypassArgs([
+          '-f', 'ba/b',
+          '-o', rawPath,
+          '--',
+          video.url,
+        ]);
+
+        await runProcess(YTDLP_BIN, rawArgs, {
+          timeoutMs: Math.max(TIMEOUT_MS, 120000),
+        });
+
+        await convertToMp3(
+          rawPath,
+          mp3Path,
+          actualDuration,
+          thumbnailBuffer ? thumbnailPath : null,
+        );
+        stat = await verifyOutput(mp3Path);
+      }
+
+      if (thumbnailBuffer && !usedFallbackConversion) {
+        try {
+          await convertToMp3(mp3Path, coveredMp3Path, actualDuration, thumbnailPath);
+          stat = await verifyOutput(coveredMp3Path);
+          finalMp3Path = coveredMp3Path;
+        } catch (error) {
+          await fsp.unlink(coveredMp3Path).catch(() => {});
+          console.warn('[X PLAY] failed to embed thumbnail:', error?.message || error);
+        }
+      }
+
+      if (stat.size > maxBytes) throw new Error('FILE_TOO_LARGE');
+
+      const buffer = await fsp.readFile(finalMp3Path);
+      if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+        throw new Error('EMPTY_OUTPUT');
+      }
+
+      return {
+        buffer,
+        title: metadata?.title || video.title || 'Unknown',
+        artist:
+          metadata?.artist ||
+          metadata?.uploader ||
+          video.author?.name ||
+          'Unknown',
+        duration: actualDuration,
+        fileName: 'audio.ogg',
+        mimetype: 'audio/ogg; codecs=opus',
+        thumbnailBuffer,
+      };
+    } catch (error) {
+      console.error('[X PLAY] resolver error:', error);
+      throw error;
+    } finally {
+      await fsp.unlink(rawPath).catch(() => {});
+      await fsp.unlink(mp3Path).catch(() => {});
+      await fsp.unlink(coveredMp3Path).catch(() => {});
+      await fsp.unlink(thumbnailPath).catch(() => {});
+    }
+  });
+}
+
+/* -------------------------------------------------------
+ * Public configuration
+ * ----------------------------------------------------- */
+export const playConfig = {
+  MAX_MB,
+  MAX_DURATION,
+  MAX_VIDEO_MB,
+  TIMEOUT_MS,
+  CONCURRENCY,
+  YTDLP_BIN,
+  GEO_COUNTRY,
+};

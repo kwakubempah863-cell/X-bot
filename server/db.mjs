@@ -60,13 +60,6 @@ CREATE TABLE IF NOT EXISTS groups (
   PRIMARY KEY (tenant_id, group_id)
 );
 
- (
-  tenant_id TEXT NOT NULL DEFAULT 'default',
-  
-
-
-
-
 CREATE TABLE IF NOT EXISTS members (
   group_id TEXT NOT NULL,
   tenant_id TEXT NOT NULL DEFAULT 'default',
@@ -332,7 +325,9 @@ CREATE TABLE IF NOT EXISTS vice_territories (
   updated_at TEXT NOT NULL
 );
 
- NOT NULL DEFAULT 'default',
+CREATE TABLE IF NOT EXISTS vice_wars (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
   group_id TEXT NOT NULL,
 
   attacker_faction_id TEXT NOT NULL,
@@ -352,6 +347,18 @@ CREATE TABLE IF NOT EXISTS vice_territories (
   winner_faction_id TEXT DEFAULT NULL
 );
 
+CREATE TABLE IF NOT EXISTS vice_war_participants (
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  war_id TEXT NOT NULL,
+  jid TEXT NOT NULL,
+  faction_id TEXT NOT NULL,
+  side TEXT NOT NULL,
+  damage INTEGER NOT NULL DEFAULT 0,
+  attacks INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+
+  PRIMARY KEY (tenant_id, war_id, jid)
+);
 
 
 CREATE TABLE IF NOT EXISTS vice_seasons (
@@ -2537,7 +2544,8 @@ export function addWarContribution(tenantId, {
   damage
 }) {
   const existing = db.prepare(`
-    SELECT * 
+    SELECT *
+    FROM vice_war_participants
     WHERE tenant_id=? AND war_id=? AND jid=?
   `).get(tenantId, warId, jid)
 
@@ -2545,7 +2553,7 @@ export function addWarContribution(tenantId, {
 
   if (existing) {
     db.prepare(`
-      UPDATE 
+      UPDATE vice_war_participants
       SET damage=damage+?, attacks=attacks+1, updated_at=?
       WHERE tenant_id=? AND war_id=? AND jid=?
     `).run(damage, timestamp, tenantId, warId, jid)

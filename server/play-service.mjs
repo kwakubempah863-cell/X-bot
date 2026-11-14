@@ -130,7 +130,7 @@ async function playEntry(entry) {
   const thumbnail = meta?.thumbnail || video.thumbnail;
 
   const jobId = `${Date.now()}_play_${sanitize(title || 'audio')}`;
-  const outputPath = path.join(TMP_ROOT, `${jobId}.mp3`);
+  const outputPath = path.join(TMP_ROOT, `${jobId}.ogg`);
 
   const args = await buildBypassArgs([
     '-f', 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
@@ -155,10 +155,10 @@ async function playEntry(entry) {
     thumbnail ? path.join(TMP_ROOT, `${jobId}_cover.jpg`) : null
   );
 
-  const finalMp3 = path.join(TMP_ROOT, `${jobId}_play.mp3`);
-  await fsp.rename(outputPath.replace(/\.mp4$/, '.mp3'), finalMp3);
+  const finalOgg = path.join(TMP_ROOT, `${jobId}_play.ogg`);
+  await fsp.rename(outputPath.replace(/\.mp4$/, '.ogg'), finalOgg);
 
-  await playMp3(finalMp3, thumbnail, duration);
+  await playOgg(finalOgg, thumbnail, duration);
 }
 
 async function playMp3(mp3Path, thumbnailPath, durationSec) {
@@ -465,6 +465,10 @@ function convertToMp3(input, output, durationSec, thumbnailPath = null) {
     }
 
     command
+      .audioCodec('libmp3lame')
+      
+      
+      
       .format('mp3')
       .on('error', reject)
       .on('end', resolve);
@@ -690,8 +694,8 @@ export async function playResolve(query) {
           video.author?.name ||
           'Unknown',
         duration: actualDuration,
-        fileName: `${base}.mp3`,
-        mimetype: 'audio/mpeg',
+        fileName: 'audio.ogg',
+        mimetype: 'audio/ogg; codecs=opus',
         thumbnailBuffer,
       };
     } catch (error) {
